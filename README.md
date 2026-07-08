@@ -1,6 +1,6 @@
 # 企业知识库 RAG 问答系统
 
-一个面向求职作品集的企业级 RAG 项目，使用 `FastAPI + React + Vite + FAISS + SQLite + 阿里云百炼 OpenAI 兼容接口` 实现。系统区分普通员工和管理员：员工负责提问，管理员负责维护企业知识库。
+一个作品集：企业级 RAG 项目，使用 `FastAPI + React + Vite + FAISS + SQLite + 阿里云百炼 OpenAI 兼容接口` 实现。系统区分普通员工和管理员：员工负责提问，管理员负责维护企业知识库。
 
 ## 核心功能
 
@@ -136,7 +136,7 @@ python -m pytest
 - 普通用户访问管理员接口返回 `403`
 - 文本切分 overlap 行为
 
-## 面试展示流程
+## 展示流程
 
 1. 使用 `admin / admin123` 登录。
 2. 上传企业制度、简历、产品手册或任意 PDF/DOCX/TXT/MD。
@@ -147,6 +147,6 @@ python -m pytest
 
 ## 注意
 
-- `.env`、上传文件、SQLite 数据库、FAISS 索引不会提交到 Git。
+- `.env`、上传文件、SQLite 数据库、FAISS 索引未提交到 Git。
 - 默认账号仅用于作品集演示，真实部署前应改为注册/后台创建用户。
 - 当前异步任务使用 FastAPI BackgroundTasks，生产环境可升级为 Celery/RQ。
