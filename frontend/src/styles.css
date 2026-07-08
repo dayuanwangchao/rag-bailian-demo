@@ -26,6 +26,68 @@ button:disabled {
   opacity: 0.58;
 }
 
+.boot-screen,
+.login-shell {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.login-card {
+  width: min(420px, 100%);
+  padding: 26px;
+  border: 1px solid #dfe6ee;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.login-card h1 {
+  margin: 18px 0 8px;
+  font-size: 26px;
+}
+
+.login-card p {
+  margin: 0 0 18px;
+  color: #617083;
+  line-height: 1.6;
+}
+
+.login-card label {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 12px;
+  color: #3b4654;
+  font-weight: 700;
+}
+
+.login-card input {
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid #d7e0ea;
+  border-radius: 8px;
+  outline: 0;
+}
+
+.login-card button {
+  width: 100%;
+  min-height: 42px;
+  margin-top: 4px;
+  border: 0;
+  border-radius: 8px;
+  color: #ffffff;
+  background: #1769aa;
+  font-weight: 800;
+}
+
+.demo-accounts {
+  display: grid;
+  gap: 5px;
+  margin-top: 16px;
+  color: #667789;
+  font-size: 13px;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
@@ -77,6 +139,45 @@ button:disabled {
   border-radius: 50%;
   background: #2fb66d;
   box-shadow: 0 0 0 4px rgba(47, 182, 109, 0.14);
+}
+
+.user-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #dfe6ee;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.user-strip strong,
+.user-strip span {
+  display: block;
+}
+
+.user-strip span {
+  margin-top: 3px;
+  color: #667789;
+  font-size: 13px;
+}
+
+.icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid #dfe6ee;
+  border-radius: 8px;
+  color: #415168;
+  background: #ffffff;
+}
+
+.icon-button.danger {
+  color: #a7362e;
+  border-color: #f0c7c2;
+  background: #fff5f3;
 }
 
 .role-nav {
@@ -300,6 +401,12 @@ button:disabled {
   margin-top: 10px;
 }
 
+.sources-label {
+  color: #667789;
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .source-card {
   padding: 12px;
   border: 1px solid #dfe6ee;
@@ -307,22 +414,18 @@ button:disabled {
   background: #fbfcfe;
 }
 
-.source-title {
-  margin-bottom: 6px;
+.source-card summary {
+  cursor: pointer;
   color: #1769aa;
   font-size: 13px;
   font-weight: 700;
 }
 
 .source-card p {
-  display: -webkit-box;
-  margin: 0;
-  overflow: hidden;
+  margin: 8px 0 0;
   color: #526173;
   font-size: 13px;
   line-height: 1.6;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
 }
 
 .composer {
@@ -417,7 +520,7 @@ button:disabled {
 
 .table-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 130px 140px;
+  grid-template-columns: minmax(0, 1fr) 110px 80px 120px 100px;
   gap: 12px;
   align-items: center;
   padding: 12px 14px;
@@ -439,6 +542,47 @@ button:disabled {
 .file-name {
   overflow-wrap: anywhere;
   font-weight: 700;
+}
+
+.file-name em {
+  display: block;
+  margin-top: 5px;
+  color: #a7362e;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 500;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.status-pill.pending,
+.status-pill.indexing {
+  color: #8a5a0a;
+  background: #fff4d7;
+}
+
+.status-pill.indexed {
+  color: #176b42;
+  background: #e2f6ec;
+}
+
+.status-pill.failed {
+  color: #a7362e;
+  background: #fff0ee;
+}
+
+.row-actions {
+  display: flex;
+  gap: 8px;
 }
 
 @media (max-width: 920px) {

@@ -1,12 +1,46 @@
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
 
+let accessToken = localStorage.getItem('rag_access_token') || ''
+
+export function setAccessToken(token) {
+  accessToken = token || ''
+  if (accessToken) {
+    localStorage.setItem('rag_access_token', accessToken)
+  } else {
+    localStorage.removeItem('rag_access_token')
+  }
+}
+
+export function getAccessToken() {
+  return accessToken
+}
+
 async function request(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, options)
+  const headers = new Headers(options.headers || {})
+  if (accessToken) {
+    headers.set('Authorization', `Bearer ${accessToken}`)
+  }
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers,
+  })
   if (!response.ok) {
     const data = await response.json().catch(() => ({}))
     throw new Error(data.detail || `请求失败：${response.status}`)
   }
   return response.json()
+}
+
+export function login(username, password) {
+  return request('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+}
+
+export function getMe() {
+  return request('/api/auth/me')
 }
 
 export function getHealth() {
@@ -34,10 +68,21 @@ export function rebuildIndex() {
   return request('/api/rebuild', { method: 'POST' })
 }
 
+export function deleteDocument(documentId) {
+  return request(`/api/documents/${documentId}`, { method: 'DELETE' })
+}
+
+export function retryDocument(documentId) {
+  return request(`/api/documents/${documentId}/retry`, { method: 'POST' })
+}
+
 export async function streamChat(question, callbacks) {
   const response = await fetch(`${API_BASE}/api/chat/stream`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    },
     body: JSON.stringify({ question }),
   })
 

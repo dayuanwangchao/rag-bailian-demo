@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     top_k: int = 5
     chunk_size: int = 800
     chunk_overlap: int = 120
+    similarity_threshold: float = 0.2
+    jwt_secret_key: str = "change-this-secret-in-production"
+    access_token_minutes: int = 720
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://127.0.0.1:5176"
 
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",
