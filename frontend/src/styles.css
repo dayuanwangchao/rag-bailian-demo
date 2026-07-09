@@ -13,7 +13,9 @@ body {
 }
 
 button,
-textarea {
+textarea,
+input,
+select {
   font: inherit;
 }
 
@@ -332,6 +334,23 @@ button:disabled {
   line-height: 1.6;
 }
 
+.header-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-tools select {
+  min-width: 190px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid #d7e0ea;
+  border-radius: 8px;
+  color: #344155;
+  background: #ffffff;
+  outline: 0;
+}
+
 .eyebrow {
   color: #1769aa;
   font-size: 13px;
@@ -392,6 +411,25 @@ button:disabled {
 .assistant .bubble {
   background: #ffffff;
   border: 1px solid #dfe6ee;
+}
+
+.feedback-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: min(760px, 100%);
+  margin-top: 8px;
+}
+
+.feedback-row button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid #dfe6ee;
+  border-radius: 8px;
+  color: #415168;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .sources {
@@ -508,6 +546,35 @@ button:disabled {
   gap: 10px;
 }
 
+.job-list {
+  display: grid;
+  gap: 10px;
+}
+
+.job-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border-radius: 8px;
+  background: #f5f8fb;
+}
+
+.job-item strong {
+  color: #344155;
+  font-size: 13px;
+}
+
+.job-item span,
+.job-item em {
+  color: #667789;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.job-item em {
+  color: #a7362e;
+}
+
 .document-table-card {
   min-height: 0;
 }
@@ -516,6 +583,53 @@ button:disabled {
   border: 1px solid #e1e8f0;
   border-radius: 8px;
   overflow: hidden;
+}
+
+.user-create-form {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) 140px;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.user-create-form input,
+.user-create-form select,
+.user-row select {
+  min-height: 38px;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid #d7e0ea;
+  border-radius: 8px;
+  color: #344155;
+  background: #ffffff;
+  outline: 0;
+}
+
+.user-table {
+  border: 1px solid #e1e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.user-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.9fr) 160px 150px minmax(100px, 1fr) 110px;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border-top: 1px solid #e8edf3;
+  background: #ffffff;
+}
+
+.user-row:first-child {
+  border-top: 0;
+}
+
+.user-head {
+  color: #617083;
+  background: #f5f8fb;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .table-row {
@@ -580,6 +694,11 @@ button:disabled {
   background: #fff0ee;
 }
 
+.status-pill.archived {
+  color: #526173;
+  background: #e8edf3;
+}
+
 .row-actions {
   display: flex;
   gap: 8px;
@@ -609,7 +728,9 @@ button:disabled {
   .admin-grid,
   .index-summary,
   .composer,
-  .table-row {
+  .table-row,
+  .user-create-form,
+  .user-row {
     grid-template-columns: 1fr;
   }
 }

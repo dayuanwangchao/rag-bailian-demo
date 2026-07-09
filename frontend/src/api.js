@@ -47,18 +47,62 @@ export function getHealth() {
   return request('/api/health')
 }
 
+export function getKnowledgeBases() {
+  return request('/api/knowledge-bases')
+}
+
+export function getDepartments() {
+  return request('/api/departments')
+}
+
+export function getUsers() {
+  return request('/api/users')
+}
+
+export function createUser(user) {
+  return request('/api/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(user),
+  })
+}
+
+export function updateUser(userId, updates) {
+  return request(`/api/users/${userId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  })
+}
+
+export function createKnowledgeBase(name, description = '') {
+  return request('/api/knowledge-bases', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, description }),
+  })
+}
+
 export function getDocuments() {
   return request('/api/documents')
+}
+
+export function getIngestionJobs() {
+  return request('/api/ingestion-jobs')
+}
+
+export function getAuditLogs() {
+  return request('/api/audit-logs')
 }
 
 export function getHistory() {
   return request('/api/history')
 }
 
-export function uploadDocument(file) {
+export function uploadDocument(file, knowledgeBaseId = 1) {
   const formData = new FormData()
   formData.append('file', file)
-  return request('/api/upload', {
+  return request(`/api/documents/upload?knowledge_base_id=${knowledgeBaseId}`, {
     method: 'POST',
     body: formData,
   })
@@ -73,17 +117,29 @@ export function deleteDocument(documentId) {
 }
 
 export function retryDocument(documentId) {
-  return request(`/api/documents/${documentId}/retry`, { method: 'POST' })
+  return request(`/api/documents/${documentId}/reindex`, { method: 'POST' })
 }
 
-export async function streamChat(question, callbacks) {
+export function archiveDocument(documentId) {
+  return request(`/api/documents/${documentId}/archive`, { method: 'POST' })
+}
+
+export function sendFeedback(messageId, rating, comment = '') {
+  return request('/api/feedback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message_id: messageId, rating, comment }),
+  })
+}
+
+export async function streamChat(question, callbacks, knowledgeBaseId = null) {
   const response = await fetch(`${API_BASE}/api/chat/stream`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, knowledge_base_id: knowledgeBaseId }),
   })
 
   if (!response.ok || !response.body) {

@@ -12,19 +12,30 @@ import {
   ShieldCheck,
   Trash2,
   UploadCloud,
+  UserPlus,
+  Users,
 } from 'lucide-react'
 import {
+  archiveDocument,
+  createUser,
   deleteDocument,
+  getAuditLogs,
   getAccessToken,
+  getDepartments,
   getDocuments,
   getHealth,
   getHistory,
+  getIngestionJobs,
+  getKnowledgeBases,
   getMe,
+  getUsers,
   login,
   rebuildIndex,
   retryDocument,
+  sendFeedback,
   setAccessToken,
   streamChat,
+  updateUser,
   uploadDocument,
 } from './api'
 
@@ -32,6 +43,12 @@ export default function App() {
   const [user, setUser] = useState(null)
   const [view, setView] = useState('chat')
   const [documents, setDocuments] = useState([])
+  const [knowledgeBases, setKnowledgeBases] = useState([])
+  const [selectedKbId, setSelectedKbId] = useState(1)
+  const [jobs, setJobs] = useState([])
+  const [auditLogs, setAuditLogs] = useState([])
+  const [users, setUsers] = useState([])
+  const [departments, setDepartments] = useState([])
   const [history, setHistory] = useState([])
   const [health, setHealth] = useState(null)
   const [question, setQuestion] = useState('')
@@ -43,16 +60,35 @@ export default function App() {
   const fileInputRef = useRef(null)
   const chatEndRef = useRef(null)
 
-  const isAdmin = user?.role === 'admin'
+  const isAdmin = ['system_admin', 'kb_admin', 'editor', 'admin'].includes(user?.role)
+  const isSystemAdmin = user?.role === 'system_admin'
   const canSend = useMemo(() => question.trim() && !loading, [question, loading])
 
   async function refreshData(currentUser = user) {
-    const [docs, healthInfo] = await Promise.all([getDocuments(), getHealth()])
+    const [docs, healthInfo, kbs] = await Promise.all([getDocuments(), getHealth(), getKnowledgeBases()])
     setDocuments(docs)
     setHealth(healthInfo)
+    setKnowledgeBases(kbs)
+    if (!selectedKbId && kbs[0]?.id) setSelectedKbId(kbs[0].id)
     if (currentUser) {
       const historyRows = await getHistory()
       setHistory(historyRows.slice(0, 8))
+    }
+    if (currentUser?.role !== 'reader') {
+      const [jobRows, auditRows] = await Promise.all([
+        getIngestionJobs().catch(() => []),
+        currentUser?.role === 'system_admin' ? getAuditLogs().catch(() => []) : Promise.resolve([]),
+      ])
+      setJobs(jobRows.slice(0, 8))
+      setAuditLogs(auditRows.slice(0, 8))
+    }
+    if (currentUser?.role === 'system_admin') {
+      const [userRows, departmentRows] = await Promise.all([
+        getUsers().catch(() => []),
+        getDepartments().catch(() => []),
+      ])
+      setUsers(userRows)
+      setDepartments(departmentRows)
     }
   }
 
@@ -65,7 +101,7 @@ export default function App() {
       try {
         const me = await getMe()
         setUser(me)
-        setView(me.role === 'admin' ? 'admin' : 'chat')
+        setView(['system_admin', 'kb_admin', 'editor', 'admin'].includes(me.role) ? 'admin' : 'chat')
         await refreshData(me)
       } catch {
         setAccessToken('')
@@ -85,7 +121,7 @@ export default function App() {
     const data = await login(username, password)
     setAccessToken(data.access_token)
     setUser(data.user)
-    setView(data.user.role === 'admin' ? 'admin' : 'chat')
+    setView(['system_admin', 'kb_admin', 'editor', 'admin'].includes(data.user.role) ? 'admin' : 'chat')
     await refreshData(data.user)
   }
 
@@ -96,6 +132,11 @@ export default function App() {
     setMessages([])
     setHistory([])
     setDocuments([])
+    setKnowledgeBases([])
+    setJobs([])
+    setAuditLogs([])
+    setUsers([])
+    setDepartments([])
     setHealth(null)
     setError('')
   }
@@ -106,7 +147,7 @@ export default function App() {
     setWorking(true)
     setError('')
     try {
-      await uploadDocument(file)
+      await uploadDocument(file, selectedKbId)
       await refreshData()
     } catch (err) {
       setError(err.message)
@@ -142,11 +183,50 @@ export default function App() {
     }
   }
 
+  async function handleArchive(documentId) {
+    setWorking(true)
+    setError('')
+    try {
+      await archiveDocument(documentId)
+      await refreshData()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setWorking(false)
+    }
+  }
+
   async function handleRetry(documentId) {
     setWorking(true)
     setError('')
     try {
       await retryDocument(documentId)
+      await refreshData()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  async function handleCreateUser(payload) {
+    setWorking(true)
+    setError('')
+    try {
+      await createUser(payload)
+      await refreshData()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  async function handleUpdateUser(userId, updates) {
+    setWorking(true)
+    setError('')
+    try {
+      await updateUser(userId, updates)
       await refreshData()
     } catch (err) {
       setError(err.message)
@@ -187,12 +267,16 @@ export default function App() {
         done: async (data) => {
           if (data?.sources) {
             setMessages((items) =>
-              items.map((item) => (item.id === assistantId ? { ...item, sources: data.sources } : item)),
+              items.map((item) =>
+                item.id === assistantId
+                  ? { ...item, sources: data.sources, messageId: data.message_id, refused: data.refused }
+                  : item,
+              ),
             )
           }
           await refreshData()
         },
-      })
+      }, selectedKbId)
     } catch (err) {
       setError(err.message)
       setMessages((items) =>
@@ -232,7 +316,7 @@ export default function App() {
         <div className="user-strip">
           <div>
             <strong>{user.username}</strong>
-            <span>{isAdmin ? '管理员' : '普通员工'}</span>
+            <span>{roleText(user.role)}</span>
           </div>
           <button className="icon-button" onClick={handleLogout} title="退出登录">
             <LogOut size={17} />
@@ -293,17 +377,32 @@ export default function App() {
             loading={loading}
             messages={messages}
             question={question}
+            knowledgeBases={knowledgeBases}
+            selectedKbId={selectedKbId}
+            setSelectedKbId={setSelectedKbId}
+            onFeedback={sendFeedback}
             setQuestion={setQuestion}
           />
         ) : (
           <AdminView
+            auditLogs={auditLogs}
+            departments={departments}
             documents={documents}
             fileInputRef={fileInputRef}
+            handleArchive={handleArchive}
             handleDelete={handleDelete}
             handleRebuild={handleRebuild}
             handleRetry={handleRetry}
             handleUpload={handleUpload}
             health={health}
+            jobs={jobs}
+            knowledgeBases={knowledgeBases}
+            isSystemAdmin={isSystemAdmin}
+            onCreateUser={handleCreateUser}
+            onUpdateUser={handleUpdateUser}
+            selectedKbId={selectedKbId}
+            setSelectedKbId={setSelectedKbId}
+            users={users}
             working={working}
           />
         )}
@@ -351,15 +450,29 @@ function LoginView({ error, onLogin, setError }) {
           {submitting ? '登录中...' : '登录'}
         </button>
         <div className="demo-accounts">
-          <span>管理员：admin / admin123</span>
-          <span>员工：user / user123</span>
+          <span>系统管理员：admin / admin123</span>
+          <span>知识库管理员：kbadmin / kbadmin123</span>
+          <span>编辑者：editor / editor123</span>
+          <span>普通员工：user / user123</span>
         </div>
       </form>
     </main>
   )
 }
 
-function ChatView({ canSend, chatEndRef, handleSubmit, loading, messages, question, setQuestion }) {
+function ChatView({
+  canSend,
+  chatEndRef,
+  handleSubmit,
+  knowledgeBases,
+  loading,
+  messages,
+  onFeedback,
+  question,
+  selectedKbId,
+  setQuestion,
+  setSelectedKbId,
+}) {
   return (
     <section className="workspace chat-workspace">
       <header className="workspace-header">
@@ -367,7 +480,15 @@ function ChatView({ canSend, chatEndRef, handleSubmit, loading, messages, questi
           <span className="eyebrow">员工入口</span>
           <h2>知识库智能问答</h2>
         </div>
-        <p>普通员工只需要提问，系统会检索企业知识库并给出带引用来源的回答。</p>
+        <div className="header-tools">
+          <select value={selectedKbId} onChange={(event) => setSelectedKbId(Number(event.target.value))}>
+            {knowledgeBases.map((kb) => (
+              <option value={kb.id} key={kb.id}>
+                {kb.name}
+              </option>
+            ))}
+          </select>
+        </div>
       </header>
 
       <div className="chat-window">
@@ -380,6 +501,14 @@ function ChatView({ canSend, chatEndRef, handleSubmit, loading, messages, questi
           messages.map((message) => (
             <article className={`message ${message.role}`} key={message.id}>
               <div className="bubble">{message.content || (loading ? '正在检索与生成...' : '')}</div>
+              {message.role === 'assistant' && message.messageId && (
+                <div className="feedback-row">
+                  <button onClick={() => onFeedback(message.messageId, 'helpful')}>有帮助</button>
+                  <button onClick={() => onFeedback(message.messageId, 'not_helpful')}>无帮助</button>
+                  <button onClick={() => onFeedback(message.messageId, 'citation_error')}>引用有误</button>
+                  <button onClick={() => onFeedback(message.messageId, 'incomplete')}>不完整</button>
+                </div>
+              )}
               {message.sources?.length > 0 && (
                 <div className="sources">
                   <div className="sources-label">
@@ -388,7 +517,9 @@ function ChatView({ canSend, chatEndRef, handleSubmit, loading, messages, questi
                   {message.sources.map((source, index) => (
                     <details className="source-card" key={`${source.file_name}-${source.chunk_id}-${index}`}>
                       <summary>
-                        来源{index + 1} · {source.file_name} · chunk {source.chunk_id}
+                        来源{index + 1} · {source.file_name} · v{source.document_version || 1} · chunk {source.chunk_id}
+                        {source.section_title ? ` · ${source.section_title}` : ''}
+                        {source.page_start ? ` · 页 ${source.page_start}` : ''}
                         {typeof source.score === 'number' ? ` · ${(source.score * 100).toFixed(1)}%` : ''}
                       </summary>
                       <p>{source.content}</p>
@@ -425,13 +556,24 @@ function ChatView({ canSend, chatEndRef, handleSubmit, loading, messages, questi
 }
 
 function AdminView({
+  auditLogs,
+  departments,
   documents,
   fileInputRef,
+  handleArchive,
   handleDelete,
   handleRebuild,
   handleRetry,
   handleUpload,
   health,
+  isSystemAdmin,
+  jobs,
+  knowledgeBases,
+  onCreateUser,
+  onUpdateUser,
+  selectedKbId,
+  setSelectedKbId,
+  users,
   working,
 }) {
   return (
@@ -441,7 +583,15 @@ function AdminView({
           <span className="eyebrow">管理员入口</span>
           <h2>知识库文档管理</h2>
         </div>
-        <p>管理员负责维护文档、重建索引和检查入库状态，普通员工不会看到这些操作。</p>
+        <div className="header-tools">
+          <select value={selectedKbId} onChange={(event) => setSelectedKbId(Number(event.target.value))}>
+            {knowledgeBases.map((kb) => (
+              <option value={kb.id} key={kb.id}>
+                {kb.name}
+              </option>
+            ))}
+          </select>
+        </div>
       </header>
 
       <div className="admin-grid">
@@ -492,6 +642,47 @@ function AdminView({
         </section>
       </div>
 
+      <div className="admin-grid">
+        <section className="admin-card">
+          <div className="admin-card-title">
+            <RefreshCcw size={20} />
+            入库任务
+          </div>
+          {jobs.length === 0 ? (
+            <div className="empty">暂无任务</div>
+          ) : (
+            <div className="job-list">
+              {jobs.map((job) => (
+                <div className="job-item" key={job.id}>
+                  <strong>{job.file_name || `文档 ${job.document_id}`}</strong>
+                  <span>{job.status} · {job.progress}% · {job.log_summary || '等待处理'}</span>
+                  {job.error_message && <em>{job.error_message}</em>}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="admin-card">
+          <div className="admin-card-title">
+            <ShieldCheck size={20} />
+            审计摘要
+          </div>
+          {auditLogs.length === 0 ? (
+            <div className="empty">暂无审计记录或无权限查看</div>
+          ) : (
+            <div className="job-list">
+              {auditLogs.map((log) => (
+                <div className="job-item" key={log.id}>
+                  <strong>{log.action}</strong>
+                  <span>{log.username || 'system'} · {log.target_type} {log.target_id}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+
       <section className="admin-card document-table-card">
         <div className="admin-card-title">
           <FileText size={20} />
@@ -515,11 +706,14 @@ function AdminView({
                   {doc.error_message && <em>{doc.error_message}</em>}
                 </span>
                 <span className={`status-pill ${doc.status}`}>{statusText(doc.status)}</span>
-                <span>{doc.chunks}</span>
-                <span>{formatSize(doc.size)}</span>
-                <span className="row-actions">
+              <span>{doc.chunks}</span>
+              <span>{formatSize(doc.size)}</span>
+              <span className="row-actions">
                   <button className="icon-button" onClick={() => handleRetry(doc.id)} disabled={working} title="重新入库">
                     <RotateCcw size={16} />
+                  </button>
+                  <button className="icon-button" onClick={() => handleArchive(doc.id)} disabled={working} title="归档文档">
+                    <FileText size={16} />
                   </button>
                   <button className="icon-button danger" onClick={() => handleDelete(doc.id)} disabled={working} title="删除文档">
                     <Trash2 size={16} />
@@ -530,7 +724,143 @@ function AdminView({
           </div>
         )}
       </section>
+
+      {isSystemAdmin && (
+        <section className="admin-card document-table-card">
+          <div className="admin-card-title">
+            <Users size={20} />
+            权限与账号
+          </div>
+          <UserCreateForm departments={departments} onCreateUser={onCreateUser} working={working} />
+          <div className="user-table">
+            <div className="user-row user-head">
+              <span>账号</span>
+              <span>角色</span>
+              <span>部门</span>
+              <span>岗位</span>
+              <span>状态</span>
+            </div>
+            {users.map((item) => (
+              <div className="user-row" key={item.id}>
+                <span className="file-name">{item.username}</span>
+                <select
+                  value={item.role}
+                  disabled={working}
+                  onChange={(event) => onUpdateUser(item.id, { role: event.target.value })}
+                >
+                  {ROLE_OPTIONS.map((role) => (
+                    <option value={role.value} key={role.value}>
+                      {role.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={item.department_id || ''}
+                  disabled={working}
+                  onChange={(event) =>
+                    onUpdateUser(item.id, {
+                      department_id: event.target.value ? Number(event.target.value) : null,
+                    })
+                  }
+                >
+                  <option value="">未分配</option>
+                  {departments.map((department) => (
+                    <option value={department.id} key={department.id}>
+                      {department.name}
+                    </option>
+                  ))}
+                </select>
+                <span>{item.position || '-'}</span>
+                <select
+                  value={item.status}
+                  disabled={working}
+                  onChange={(event) => onUpdateUser(item.id, { status: event.target.value })}
+                >
+                  <option value="active">启用</option>
+                  <option value="disabled">停用</option>
+                </select>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </section>
+  )
+}
+
+const ROLE_OPTIONS = [
+  { value: 'system_admin', label: '系统管理员' },
+  { value: 'kb_admin', label: '知识库管理员' },
+  { value: 'editor', label: '编辑者' },
+  { value: 'reader', label: '普通员工' },
+]
+
+function UserCreateForm({ departments, onCreateUser, working }) {
+  const [form, setForm] = useState({
+    username: '',
+    password: '',
+    role: 'reader',
+    department_id: '',
+    position: '',
+  })
+
+  function update(field, value) {
+    setForm((current) => ({ ...current, [field]: value }))
+  }
+
+  async function submit(event) {
+    event.preventDefault()
+    await onCreateUser({
+      username: form.username.trim(),
+      password: form.password,
+      role: form.role,
+      department_id: form.department_id ? Number(form.department_id) : null,
+      position: form.position.trim(),
+    })
+    setForm({ username: '', password: '', role: 'reader', department_id: '', position: '' })
+  }
+
+  return (
+    <form className="user-create-form" onSubmit={submit}>
+      <input
+        value={form.username}
+        onChange={(event) => update('username', event.target.value)}
+        placeholder="账号"
+        required
+      />
+      <input
+        type="password"
+        value={form.password}
+        onChange={(event) => update('password', event.target.value)}
+        placeholder="初始密码"
+        required
+        minLength={6}
+      />
+      <select value={form.role} onChange={(event) => update('role', event.target.value)}>
+        {ROLE_OPTIONS.map((role) => (
+          <option value={role.value} key={role.value}>
+            {role.label}
+          </option>
+        ))}
+      </select>
+      <select value={form.department_id} onChange={(event) => update('department_id', event.target.value)}>
+        <option value="">未分配部门</option>
+        {departments.map((department) => (
+          <option value={department.id} key={department.id}>
+            {department.name}
+          </option>
+        ))}
+      </select>
+      <input
+        value={form.position}
+        onChange={(event) => update('position', event.target.value)}
+        placeholder="岗位"
+      />
+      <button type="submit" className="primary-button" disabled={working || !form.username.trim() || !form.password}>
+        <UserPlus size={17} />
+        创建账号
+      </button>
+    </form>
   )
 }
 
@@ -540,6 +870,7 @@ function statusText(status) {
     indexing: '入库中',
     indexed: '已入库',
     failed: '失败',
+    archived: '已归档',
   }
   return map[status] || status
 }
@@ -549,4 +880,16 @@ function formatSize(size) {
   if (size < 1024) return `${size} B`
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
   return `${(size / 1024 / 1024).toFixed(1)} MB`
+}
+
+function roleText(role) {
+  const map = {
+    system_admin: '系统管理员',
+    kb_admin: '知识库管理员',
+    editor: '编辑者',
+    reader: '普通员工',
+    admin: '系统管理员',
+    user: '普通员工',
+  }
+  return map[role] || role
 }

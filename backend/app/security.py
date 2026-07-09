@@ -10,9 +10,20 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .config import get_settings
-
-
 security = HTTPBearer(auto_error=False)
+ADMIN_ROLES = {"system_admin", "kb_admin", "editor", "admin"}
+
+
+def normalize_role(role: str) -> str:
+    if role == "admin":
+        return "system_admin"
+    if role == "user":
+        return "reader"
+    return role
+
+
+def is_admin_role(role: str) -> bool:
+    return normalize_role(role) in ADMIN_ROLES
 
 
 def hash_password(password: str, salt: str | None = None) -> str:
@@ -73,8 +84,14 @@ def get_token_payload(credentials: HTTPAuthorizationCredentials | None = Depends
 
 
 def require_admin(payload: dict[str, Any] = Depends(get_token_payload)) -> dict[str, Any]:
-    if payload.get("role") != "admin":
+    if not is_admin_role(str(payload.get("role", ""))):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
+    return payload
+
+
+def require_system_admin(payload: dict[str, Any] = Depends(get_token_payload)) -> dict[str, Any]:
+    if normalize_role(str(payload.get("role", ""))) != "system_admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="System admin role required")
     return payload
 
 

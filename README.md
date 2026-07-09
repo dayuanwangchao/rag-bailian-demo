@@ -14,7 +14,9 @@
 ## 演示账号
 
 ```text
-管理员：admin / admin123
+系统管理员：admin / admin123
+知识库管理员：kbadmin / kbadmin123
+编辑者：editor / editor123
 普通员工：user / user123
 ```
 
@@ -93,18 +95,34 @@ http://127.0.0.1:5176
 
 ## Docker Compose
 
-先准备 `backend/.env`，再执行：
+先安装并启动 Docker Desktop for Windows，确认 Docker Desktop 状态为 Running。
 
-```bash
-cd rag-bailian-demo
-docker compose up --build
+一键启动：
+
+```powershell
+cd E:\CodexWorkspace\rag-bailian-demo
+.\start-docker.ps1 -Build
+```
+
+停止：
+
+```powershell
+.\stop-docker.ps1
+```
+
+需要清空 Docker 容器卷并重来：
+
+```powershell
+.\docker-reset.ps1
 ```
 
 访问：
 
 ```text
-Frontend: http://localhost:5176
-Backend:  http://localhost:8000/docs
+Frontend:     http://localhost:5176
+Backend docs: http://localhost:8000/docs
+Nginx entry:  http://localhost:8080
+MinIO:        http://localhost:9001
 ```
 
 ## API 概览

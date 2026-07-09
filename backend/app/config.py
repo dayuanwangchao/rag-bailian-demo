@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     chunk_size: int = 800
     chunk_overlap: int = 120
     similarity_threshold: float = 0.2
+    max_upload_mb: int = 100
+    database_url: str = "sqlite:///data/rag.db"
+    redis_url: str = "redis://redis:6379/0"
+    object_storage_endpoint: str = "http://minio:9000"
+    ingestion_mode: str = "inline"
     jwt_secret_key: str = "change-this-secret-in-production"
     access_token_minutes: int = 720
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://127.0.0.1:5176"
