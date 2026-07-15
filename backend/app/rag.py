@@ -2,13 +2,15 @@ import hashlib
 import json
 import re
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
-from .config import UPLOAD_DIR, get_settings
+from .config import get_settings
 from .database import audit, get_db, is_admin_role, normalize_role
 from .document_loader import load_document_blocks
 from .embeddings import embed_texts
 from .llm import chat_completion
+from .object_storage import object_storage
 from .schemas import Source
 from .splitter import split_text
 from .vector_store import vector_store
@@ -76,8 +78,7 @@ def get_knowledge_base(kb_id: int) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def create_document_record(path: Path, user: dict[str, Any], knowledge_base_id: int = 1) -> tuple[int, int]:
-    file_hash = _sha256_file(path)
+def create_document_record(file_name: str, object_key: str, file_hash: str, size: int, user: dict[str, Any], knowledge_base_id: int = 1) -> tuple[int, int]:
     role = normalize_role(str(user.get("role", "reader")))
     visible_roles = ["reader", "editor", "kb_admin", "system_admin"]
     department_scope = [int(user["department_id"])] if user.get("department_id") else []
@@ -88,7 +89,7 @@ def create_document_record(path: Path, user: dict[str, Any], knowledge_base_id: 
             SELECT id, current_version FROM documents
             WHERE knowledge_base_id = ? AND file_name = ? AND archived_at IS NULL
             """,
-            (knowledge_base_id, path.name),
+            (knowledge_base_id, file_name),
         ).fetchone()
         if existing:
             document_id = int(existing["id"])
@@ -105,11 +106,11 @@ def create_document_record(path: Path, user: dict[str, Any], knowledge_base_id: 
                 WHERE id = ?
                 """,
                 (
-                    str(path),
-                    str(path),
+                    object_key,
+                    object_key,
                     file_hash,
-                    path.suffix.lower().lstrip("."),
-                    path.stat().st_size,
+                    Path(file_name).suffix.lower().lstrip("."),
+                    size,
                     int(user["sub"]),
                     version,
                     json.dumps(department_scope),
@@ -128,12 +129,12 @@ def create_document_record(path: Path, user: dict[str, Any], knowledge_base_id: 
                 """,
                 (
                     knowledge_base_id,
-                    path.name,
-                    str(path),
-                    str(path),
+                    file_name,
+                    object_key,
+                    object_key,
                     file_hash,
-                    path.suffix.lower().lstrip("."),
-                    path.stat().st_size,
+                    Path(file_name).suffix.lower().lstrip("."),
+                    size,
                     int(user["sub"]),
                     json.dumps(department_scope),
                     json.dumps(visible_roles),
@@ -146,7 +147,7 @@ def create_document_record(path: Path, user: dict[str, Any], knowledge_base_id: 
             INSERT INTO document_versions (document_id, version, file_uri, file_hash, size, created_by)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (document_id, version, str(path), file_hash, path.stat().st_size, int(user["sub"])),
+            (document_id, version, object_key, file_hash, size, int(user["sub"])),
         )
         version_id = int(version_cursor.lastrowid)
         job_cursor = conn.execute(
@@ -157,7 +158,7 @@ def create_document_record(path: Path, user: dict[str, Any], knowledge_base_id: 
             (document_id,),
         )
         job_id = int(job_cursor.lastrowid)
-    audit(int(user["sub"]), "document.upload", "document", document_id, {"file_name": path.name, "role": role})
+    audit(int(user["sub"]), "document.upload", "document", document_id, {"file_name": file_name, "role": role, "object_key": object_key})
     return document_id, job_id
 
 
@@ -180,7 +181,7 @@ async def process_ingestion_job(job_id: int) -> None:
         conn.execute("UPDATE documents SET status = 'indexing', error_message = NULL WHERE id = ?", (document["id"],))
 
     try:
-        path = Path(document["file_path"])
+        path = object_storage.materialize(document["file_path"], f".{document['file_type']}")
         blocks = load_document_blocks(path)
         if not any(block["text"].strip() for block in blocks):
             raise ValueError("文档未解析出可入库文本，可能是扫描件或空文档")
@@ -230,7 +231,7 @@ async def process_ingestion_job(job_id: int) -> None:
                     (
                         document["id"],
                         version_id,
-                        path.name,
+                        document["file_name"],
                         i,
                         record["section_title"],
                         record["page_start"],
@@ -245,14 +246,6 @@ async def process_ingestion_job(job_id: int) -> None:
 
         vector_store.add(vectors, chunk_ids)
         with get_db() as conn:
-            for chunk_id, vector in zip(chunk_ids, vectors, strict=False):
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO chunk_embeddings (chunk_id, model, dimensions)
-                    VALUES (?, ?, ?)
-                    """,
-                    (chunk_id, settings.dashscope_embedding_model, len(vector)),
-                )
             conn.execute(
                 "UPDATE documents SET status = 'indexed', chunks = ?, error_message = NULL WHERE id = ?",
                 (len(chunk_records), document["id"]),
@@ -267,6 +260,8 @@ async def process_ingestion_job(job_id: int) -> None:
                 (f"入库完成，共 {len(chunk_records)} 个片段", job_id),
             )
         audit(int(document["uploaded_by"]) if document["uploaded_by"] else None, "document.indexed", "document", document["id"], {"chunks": len(chunk_records)})
+        if get_settings().database_url.startswith("postgresql"):
+            path.unlink(missing_ok=True)
     except Exception as exc:
         with get_db() as conn:
             conn.execute("DELETE FROM chunks WHERE document_id = ?", (document["id"],))
@@ -300,18 +295,20 @@ def create_ingestion_job(document_id: int) -> int:
 
 
 async def rebuild_index(actor_id: int | None = None) -> tuple[int, int]:
-    vector_store.reset()
     with get_db() as conn:
         conn.execute("DELETE FROM chunks")
         conn.execute("UPDATE documents SET status = 'pending', chunks = 0, error_message = NULL WHERE archived_at IS NULL")
         document_ids = [int(row["id"]) for row in conn.execute("SELECT id FROM documents WHERE archived_at IS NULL ORDER BY id").fetchall()]
 
+    # Rebuilds use the same queue as uploads; the API never holds a request
+    # open while calling an embedding provider for every document.
+    from .queue import enqueue_ingestion
     for document_id in document_ids:
-        await index_document(document_id)
+        enqueue_ingestion(create_ingestion_job(document_id))
 
     documents = list_documents()
     audit(actor_id, "index.rebuild", "index", "default", {"documents": len(documents)})
-    return len(documents), sum(int(doc["chunks"]) for doc in documents if doc["status"] == "indexed")
+    return len(documents), 0
 
 
 async def delete_document(document_id: int, actor_id: int | None = None) -> bool:
@@ -324,9 +321,7 @@ async def delete_document(document_id: int, actor_id: int | None = None) -> bool
         conn.execute("DELETE FROM documents WHERE id = ?", (document_id,))
 
     vector_store.remove(chunk_ids)
-    path = Path(document["file_path"])
-    if path.exists() and path.is_file() and UPLOAD_DIR in path.resolve().parents:
-        path.unlink()
+    object_storage.delete(document["file_path"])
     audit(actor_id, "document.delete", "document", document_id, {"file_name": document["file_name"]})
     return True
 
@@ -565,7 +560,9 @@ def _keyword_search(query: str, user: dict[str, Any], knowledge_base_id: int | N
     with get_db() as conn:
         rows = conn.execute(
             """
-            SELECT c.id, c.content, d.*
+            SELECT c.id, c.content, d.knowledge_base_id, d.current_version,
+                   d.department_scope, d.visible_roles, d.visible_users,
+                   d.classification, d.status, d.archived_at
             FROM chunks c
             JOIN documents d ON d.id = c.document_id
             WHERE d.status = 'indexed' AND d.archived_at IS NULL

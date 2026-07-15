@@ -20,10 +20,15 @@ class Settings(BaseSettings):
     chunk_overlap: int = 120
     similarity_threshold: float = 0.2
     max_upload_mb: int = 100
+    # Docker Compose sets the production PostgreSQL URL. SQLite is test-only.
     database_url: str = "sqlite:///data/rag.db"
     redis_url: str = "redis://redis:6379/0"
     object_storage_endpoint: str = "http://minio:9000"
-    ingestion_mode: str = "inline"
+    object_storage_access_key: str = "ragminio"
+    object_storage_secret_key: str = "ragminio123"
+    object_storage_bucket: str = "rag-documents"
+    ingestion_queue: str = "rag:ingestion"
+    ingestion_mode: str = "queue"
     jwt_secret_key: str = "change-this-secret-in-production"
     access_token_minutes: int = 720
     cors_origins: str = "http://localhost:5176,http://127.0.0.1:5176,http://localhost:5173,http://127.0.0.1:5173"

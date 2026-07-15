@@ -41,7 +41,10 @@ services:
       DATABASE_URL: postgresql://rag:rag_dev_password@postgres:5432/rag
       REDIS_URL: redis://redis:6379/0
       OBJECT_STORAGE_ENDPOINT: http://minio:9000
-      INGESTION_MODE: worker
+      OBJECT_STORAGE_ACCESS_KEY: ragminio
+      OBJECT_STORAGE_SECRET_KEY: ragminio123
+      OBJECT_STORAGE_BUCKET: rag-documents
+      INGESTION_MODE: queue
     ports:
       - "8000:8000"
     volumes:
@@ -66,7 +69,10 @@ services:
       DATABASE_URL: postgresql://rag:rag_dev_password@postgres:5432/rag
       REDIS_URL: redis://redis:6379/0
       OBJECT_STORAGE_ENDPOINT: http://minio:9000
-      INGESTION_MODE: worker
+      OBJECT_STORAGE_ACCESS_KEY: ragminio
+      OBJECT_STORAGE_SECRET_KEY: ragminio123
+      OBJECT_STORAGE_BUCKET: rag-documents
+      INGESTION_MODE: queue
     volumes:
       - ./backend/data:/app/data
     depends_on:

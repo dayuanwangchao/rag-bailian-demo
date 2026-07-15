@@ -1,6 +1,6 @@
 # 企业知识库 RAG 问答系统
 
-一个作品集：企业级 RAG 项目，使用 `FastAPI + React + Vite + FAISS + SQLite + 阿里云百炼 OpenAI 兼容接口` 实现。系统区分普通员工和管理员：员工负责提问，管理员负责维护企业知识库。
+一个作品集：企业级 RAG 项目，使用 `FastAPI + React + Vite + PostgreSQL/pgvector + Redis + MinIO + 阿里云百炼 OpenAI 兼容接口` 实现。系统区分普通员工和管理员：员工负责提问，管理员负责维护企业知识库。
 
 ## 核心功能
 
@@ -8,8 +8,8 @@
 - 管理员端：文档上传、后台入库、文档状态、失败重试、删除文档、重建索引
 - 权限控制：JWT 鉴权，`admin / user` 两种角色，普通用户无法访问管理接口
 - RAG 链路：PDF/DOCX/TXT/MD 解析、文本切分、百炼 embedding、FAISS 检索、qwen-plus 回答
-- 稳定存储：SQLite 保存用户、文档元数据、chunk 元数据、问答历史；FAISS 本地持久化
-- 工程化：Docker Compose、一键启动说明、基础测试用例
+- 稳定存储：PostgreSQL 保存用户、文档元数据、chunk 向量、问答历史；MinIO 保存原始文件
+- 工程化：Redis 异步入库队列、独立 Worker、Docker Compose、一键启动说明、基础测试用例
 
 ## 演示账号
 
@@ -27,16 +27,16 @@ React + Vite
   ├─ 员工问答端：只提问、看引用、看自己的历史
   └─ 管理员端：上传、删除、重试、重建索引、看文档状态
 
-FastAPI
+FastAPI API（可横向扩展）
   ├─ JWT 鉴权与角色权限
   ├─ 文档解析与后台入库
   ├─ RAG 检索与流式问答
-  └─ SQLite 元数据持久化
+  └─ PostgreSQL + pgvector 元数据与向量检索
 
 Storage
-  ├─ backend/data/uploads      原始上传文件
-  ├─ backend/data/rag.db       用户、文档、chunks、历史
-  └─ backend/data/indexes      FAISS 向量索引
+  ├─ MinIO                     原始上传文件与版本
+  ├─ PostgreSQL + pgvector     用户、文档、chunks、历史与向量
+  └─ Redis                     入库任务队列
 ```
 
 ## 本地启动
@@ -167,4 +167,4 @@ python -m pytest
 
 - `.env`、上传文件、SQLite 数据库、FAISS 索引未提交到 Git。
 - 默认账号仅用于作品集演示，真实部署前应改为注册/后台创建用户。
-- 当前异步任务使用 FastAPI BackgroundTasks，生产环境可升级为 Celery/RQ。
+- Docker 部署时，入库由 Redis 队列和独立 Worker 处理；本地 SQLite 仅用于不依赖基础设施的测试回退。

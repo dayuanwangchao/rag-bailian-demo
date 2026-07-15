@@ -1,9 +1,10 @@
 # Backend
 
-FastAPI backend for the enterprise RAG pilot demo. It keeps a local SQLite/FAISS
-fallback for development, while exposing enterprise-oriented concepts such as
-knowledge bases, roles, document versions, ingestion jobs, audit logs, feedback,
-and permission-aware retrieval.
+FastAPI backend for the enterprise RAG pilot demo. Docker deployments use
+PostgreSQL + pgvector for shared metadata/vector retrieval, Redis for ingestion
+jobs, and MinIO for original files. SQLite is retained only as a lightweight
+test fallback. The API exposes knowledge bases, roles, document versions,
+ingestion jobs, audit logs, feedback, and permission-aware retrieval.
 
 ## Start
 
@@ -52,5 +53,17 @@ cd E:\CodexWorkspace\rag-bailian-demo
 .\stop-docker.ps1
 ```
 
-Docker Compose sets `INGESTION_MODE=worker`, so uploads are processed by the
-`worker` service instead of FastAPI inline background tasks.
+Docker Compose sets `INGESTION_MODE=queue`, so uploads are persisted to MinIO
+and queued in Redis; the `worker` service processes them independently of the
+API service.
+
+## Migrate the legacy demo data
+
+With the cloud services running and `DATABASE_URL` pointing to PostgreSQL,
+run the one-time importer below. It copies metadata, moves readable legacy
+uploads to MinIO, and queues a clean embedding rebuild (legacy FAISS files are
+not reused):
+
+```powershell
+python scripts/migrate_sqlite_to_postgres.py data/rag.db
+```

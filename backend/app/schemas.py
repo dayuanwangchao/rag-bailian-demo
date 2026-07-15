@@ -154,6 +154,8 @@ class HealthResponse(BaseModel):
     database: str = "ok"
     vector_store: str = "ok"
     model_api: str = "not_checked"
+    queue: str = "not_checked"
+    object_storage: str = "not_checked"
 
 
 class DeleteResponse(BaseModel):

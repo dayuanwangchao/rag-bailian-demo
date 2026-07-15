@@ -1,5 +1,4 @@
 import json
-import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -7,7 +6,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Uplo
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from .config import UPLOAD_DIR, get_settings
+from .config import get_settings
 from .database import (
     audit,
     create_user,
@@ -23,6 +22,8 @@ from .database import (
 )
 from .document_loader import SUPPORTED_EXTENSIONS
 from .llm import stream_chat_completion
+from .object_storage import object_storage
+from .queue import enqueue_ingestion, health as queue_health
 from .rag import (
     NO_ANSWER,
     answer_question,
@@ -95,18 +96,33 @@ app.add_middleware(
 @app.get("/api/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     database = "ok"
+    queue = "ok"
+    object_store = "ok"
     try:
         with get_db() as conn:
             conn.execute("SELECT 1").fetchone()
     except Exception:
         database = "error"
+    if settings.ingestion_mode == "inline":
+        queue = "inline"
+    else:
+        try:
+            queue = queue_health()
+        except Exception:
+            queue = "error"
+    try:
+        object_store = object_storage.health()
+    except Exception:
+        object_store = "error"
     return HealthResponse(
-        status="ok" if database == "ok" else "degraded",
+        status="ok" if database == "ok" and queue != "error" and object_store != "error" else "degraded",
         indexed_chunks=vector_store.count,
         documents=len(list_documents()),
         database=database,
-        vector_store="ok",
+        vector_store="pgvector" if settings.database_url.startswith("postgresql") else "sqlite_test_fallback",
         model_api="configured" if settings.dashscope_api_key else "not_configured",
+        queue=queue,
+        object_storage=object_store,
     )
 
 
@@ -205,16 +221,15 @@ async def upload_document(
         raise HTTPException(status_code=413, detail=f"文件不能超过 {settings.max_upload_mb}MB")
 
     safe_name = Path(file.filename or "uploaded").name
-    target = UPLOAD_DIR / safe_name
-    with target.open("wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    if target.stat().st_size > settings.max_upload_mb * 1024 * 1024:
-        target.unlink(missing_ok=True)
+    data = await file.read()
+    if len(data) > settings.max_upload_mb * 1024 * 1024:
         raise HTTPException(status_code=413, detail=f"文件不能超过 {settings.max_upload_mb}MB")
-
-    document_id, job_id = create_document_record(target, payload, knowledge_base_id)
-    if settings.ingestion_mode != "worker":
+    object_key, file_hash = object_storage.put_bytes(safe_name, data, file.content_type)
+    document_id, job_id = create_document_record(safe_name, object_key, file_hash, len(data), payload, knowledge_base_id)
+    if settings.ingestion_mode == "inline":
         background_tasks.add_task(process_ingestion_job, job_id)
+    else:
+        enqueue_ingestion(job_id)
     document = get_document(document_id) or {}
     return UploadResponse(
         document_id=document_id,
@@ -255,8 +270,10 @@ async def retry_document(
     if document is None:
         raise HTTPException(status_code=404, detail="文档不存在")
     job_id = create_ingestion_job(document_id)
-    if settings.ingestion_mode != "worker":
+    if settings.ingestion_mode == "inline":
         background_tasks.add_task(process_ingestion_job, job_id)
+    else:
+        enqueue_ingestion(job_id)
     audit(int(payload["sub"]), "document.reindex", "document", document_id, {"job_id": job_id})
     return UploadResponse(
         document_id=document_id,
