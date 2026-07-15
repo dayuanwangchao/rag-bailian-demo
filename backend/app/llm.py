@@ -12,6 +12,7 @@ def get_async_client() -> AsyncOpenAI:
     return AsyncOpenAI(
         api_key=settings.dashscope_api_key,
         base_url=settings.dashscope_base_url,
+        timeout=60.0,
     )
 
 

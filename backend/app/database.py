@@ -190,6 +190,7 @@ def init_db() -> None:
             """
         )
         _add_missing_columns(conn)
+        _repair_legacy_chunk_foreign_key(conn)
         _seed_enterprise_defaults(conn)
 
 
@@ -301,6 +302,72 @@ def _add_missing_columns(conn: sqlite3.Connection) -> None:
         add("chunks", "permission_tags", "permission_tags TEXT NOT NULL DEFAULT '[]'")
 
 
+def _repair_legacy_chunk_foreign_key(conn: sqlite3.Connection) -> None:
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'chunks'").fetchone()
+    if row is None or "documents_legacy" not in (row["sql"] or ""):
+        return
+
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.executescript(
+        """
+        CREATE TEMP TABLE chunk_embeddings_backup AS
+        SELECT ce.*
+        FROM chunk_embeddings ce
+        JOIN chunks c ON c.id = ce.chunk_id
+        JOIN documents d ON d.id = c.document_id;
+
+        DROP TABLE IF EXISTS chunk_embeddings;
+        ALTER TABLE chunks RENAME TO chunks_legacy_fk;
+
+        CREATE TABLE chunks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id INTEGER NOT NULL,
+            document_version_id INTEGER,
+            file_name TEXT NOT NULL,
+            chunk_id INTEGER NOT NULL,
+            section_title TEXT NOT NULL DEFAULT '',
+            page_start INTEGER,
+            page_end INTEGER,
+            token_count INTEGER NOT NULL DEFAULT 0,
+            content_hash TEXT NOT NULL DEFAULT '',
+            content TEXT NOT NULL,
+            permission_tags TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE,
+            FOREIGN KEY(document_version_id) REFERENCES document_versions(id) ON DELETE SET NULL
+        );
+
+        INSERT INTO chunks
+        (id, document_id, document_version_id, file_name, chunk_id, section_title, page_start, page_end,
+         token_count, content_hash, content, permission_tags, created_at)
+        SELECT c.id, c.document_id, c.document_version_id, c.file_name, c.chunk_id,
+               COALESCE(c.section_title, ''), c.page_start, c.page_end, COALESCE(c.token_count, 0),
+               COALESCE(c.content_hash, ''), c.content, COALESCE(c.permission_tags, '[]'), c.created_at
+        FROM chunks_legacy_fk c
+        JOIN documents d ON d.id = c.document_id;
+
+        DROP TABLE chunks_legacy_fk;
+
+        CREATE TABLE chunk_embeddings (
+            chunk_id INTEGER PRIMARY KEY,
+            model TEXT NOT NULL,
+            dimensions INTEGER NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
+        );
+
+        INSERT INTO chunk_embeddings (chunk_id, model, dimensions, created_at)
+        SELECT b.chunk_id, b.model, b.dimensions, b.created_at
+        FROM chunk_embeddings_backup b
+        JOIN chunks c ON c.id = b.chunk_id;
+
+        DROP TABLE chunk_embeddings_backup;
+        """
+    )
+    conn.execute("PRAGMA foreign_keys = ON")
+
+
 def _seed_enterprise_defaults(conn: sqlite3.Connection) -> None:
     conn.execute("INSERT OR IGNORE INTO departments (id, name) VALUES (1, '总部')")
     conn.execute("INSERT OR IGNORE INTO departments (id, name) VALUES (2, '研发部')")
@@ -320,7 +387,11 @@ def _seed_enterprise_defaults(conn: sqlite3.Connection) -> None:
 def migrate_json_runtime_data() -> None:
     documents_path = INDEX_DIR / "documents.json"
     history_path = INDEX_DIR / "history.json"
+    marker_path = INDEX_DIR / ".json_migrated"
+    if marker_path.exists():
+        return
     if not documents_path.exists() and not history_path.exists():
+        marker_path.write_text("ok", encoding="utf-8")
         return
 
     with get_db() as conn:
@@ -363,6 +434,7 @@ def migrate_json_runtime_data() -> None:
                         json.dumps(row.get("sources", []), ensure_ascii=False),
                     ),
                 )
+    marker_path.write_text("ok", encoding="utf-8")
 
 
 def get_user_by_username(username: str) -> sqlite3.Row | None:
@@ -426,14 +498,23 @@ def update_user(user_id: int, updates: dict[str, Any], actor_id: int) -> dict[st
     if not allowed:
         user = get_user_by_id(user_id)
         return dict(user) if user else None
-    if user_id == actor_id and allowed.get("status") == "disabled":
-        raise ValueError("不能停用当前登录账号")
-    if user_id == actor_id and allowed.get("role") and allowed["role"] != "system_admin":
+    if user_id == actor_id and "status" in allowed:
+        raise ValueError("不能修改当前登录账号状态")
+    if user_id == actor_id and allowed.get("role") and normalize_role(allowed["role"]) != "system_admin":
         raise ValueError("不能降低当前登录账号权限")
     with get_db() as conn:
-        existing = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        existing = conn.execute("SELECT id, role, status FROM users WHERE id = ?", (user_id,)).fetchone()
         if existing is None:
             return None
+        current_role = normalize_role(existing["role"])
+        will_disable = allowed.get("status") == "disabled"
+        will_remove_system_admin = allowed.get("role") and normalize_role(allowed["role"]) != "system_admin"
+        if current_role == "system_admin" and (will_disable or will_remove_system_admin):
+            active_admins = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE role = 'system_admin' AND status = 'active'"
+            ).fetchone()[0]
+            if int(active_admins) <= 1:
+                raise ValueError("至少需要保留一个启用状态的系统管理员")
         if allowed.get("department_id") is not None:
             department = conn.execute("SELECT id FROM departments WHERE id = ?", (allowed["department_id"],)).fetchone()
             if department is None:
@@ -495,7 +576,8 @@ def _seed_user(
             UPDATE users
             SET role = CASE WHEN role IN ('admin', 'user') THEN ? ELSE role END,
                 department_id = COALESCE(department_id, ?),
-                position = CASE WHEN position = '' THEN ? ELSE position END
+                position = CASE WHEN position = '' THEN ? ELSE position END,
+                status = 'active'
             WHERE id = ?
             """,
             (role, department_id, position, existing["id"]),

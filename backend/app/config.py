@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     ingestion_mode: str = "inline"
     jwt_secret_key: str = "change-this-secret-in-production"
     access_token_minutes: int = 720
-    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://127.0.0.1:5176"
+    cors_origins: str = "http://localhost:5176,http://127.0.0.1:5176,http://localhost:5173,http://127.0.0.1:5173"
 
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",

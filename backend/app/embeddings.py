@@ -6,7 +6,7 @@ from .config import get_settings
 from .llm import get_async_client
 
 
-async def embed_texts(texts: list[str], batch_size: int = 16) -> list[list[float]]:
+async def embed_texts(texts: list[str], batch_size: int = 8) -> list[list[float]]:
     if not texts:
         return []
 

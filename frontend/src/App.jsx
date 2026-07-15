@@ -116,6 +116,20 @@ export default function App() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  useEffect(() => {
+    if (!user || !isAdmin) return undefined
+    const hasActiveJobs = jobs.some((job) => !['completed', 'failed'].includes(job.status))
+    const hasActiveDocuments = documents.some((doc) =>
+      ['pending', 'indexing'].includes(doc.status),
+    )
+    if (!hasActiveJobs && !hasActiveDocuments) return undefined
+
+    const timer = window.setInterval(() => {
+      refreshData().catch(() => {})
+    }, 2000)
+    return () => window.clearInterval(timer)
+  }, [documents, isAdmin, jobs, user])
+
   async function handleLogin(username, password) {
     setError('')
     const data = await login(username, password)
@@ -386,6 +400,7 @@ export default function App() {
         ) : (
           <AdminView
             auditLogs={auditLogs}
+            currentUserId={user.id}
             departments={departments}
             documents={documents}
             fileInputRef={fileInputRef}
@@ -557,6 +572,7 @@ function ChatView({
 
 function AdminView({
   auditLogs,
+  currentUserId,
   departments,
   documents,
   fileInputRef,
@@ -745,7 +761,8 @@ function AdminView({
                 <span className="file-name">{item.username}</span>
                 <select
                   value={item.role}
-                  disabled={working}
+                  disabled={working || item.id === currentUserId}
+                  title={item.id === currentUserId ? '不能修改当前登录账号角色' : '修改角色'}
                   onChange={(event) => onUpdateUser(item.id, { role: event.target.value })}
                 >
                   {ROLE_OPTIONS.map((role) => (
@@ -773,7 +790,8 @@ function AdminView({
                 <span>{item.position || '-'}</span>
                 <select
                   value={item.status}
-                  disabled={working}
+                  disabled={working || item.id === currentUserId}
+                  title={item.id === currentUserId ? '不能停用当前登录账号' : '修改状态'}
                   onChange={(event) => onUpdateUser(item.id, { status: event.target.value })}
                 >
                   <option value="active">启用</option>
