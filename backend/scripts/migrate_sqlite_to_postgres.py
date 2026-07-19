@@ -31,18 +31,32 @@ def copy_metadata(source: sqlite3.Connection) -> list[int]:
             if source.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is None:
                 continue
             rows = source.execute(f"SELECT * FROM {table}").fetchall()
+            target_columns = {
+                row["column_name"]
+                for row in target.execute(
+                    "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = ?",
+                    (table,),
+                ).fetchall()
+            }
             for row in rows:
-                values = dict(row)
+                values = {key: value for key, value in dict(row).items() if key in target_columns}
                 columns = list(values)
                 # File object keys are filled in after the metadata pass.
                 if table == "documents":
                     document_ids.append(int(values["id"]))
                     values["status"], values["chunks"], values["error_message"] = "pending", 0, None
+                if table == "chat_messages" and "refused" in values:
+                    values["refused"] = bool(values["refused"])
                 placeholders = ", ".join("?" for _ in columns)
                 target.execute(
                     f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders}) ON CONFLICT (id) DO NOTHING",
                     tuple(values[column] for column in columns),
                 )
+        for table in TABLES:
+            target.execute(
+                "SELECT setval(pg_get_serial_sequence(?, 'id'), COALESCE((SELECT MAX(id) FROM " + table + "), 1), true)",
+                (table,),
+            )
     return document_ids
 
 
@@ -55,6 +69,10 @@ def move_files(source_path: Path, document_ids: list[int]) -> None:
             if not row:
                 continue
             legacy_path = Path(row["file_path"])
+            if not legacy_path.exists():
+                legacy_path = source_path.parent / "uploads" / row["file_path"]
+            if not legacy_path.exists():
+                legacy_path = source_path.parent / "uploads" / row["file_name"]
             if not legacy_path.exists():
                 print(f"skip missing file: {legacy_path}")
                 continue

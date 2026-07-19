@@ -22,13 +22,22 @@ class ObjectStorage:
     def _remote(self) -> bool:
         return get_settings().database_url.startswith("postgresql")
 
+    def ensure_bucket(self) -> None:
+        if not self._remote():
+            return
+        settings = get_settings()
+        client = self._client()
+        try:
+            client.head_bucket(Bucket=settings.object_storage_bucket)
+        except Exception:
+            client.create_bucket(Bucket=settings.object_storage_bucket)
+
     def put_bytes(self, file_name: str, data: bytes, content_type: str | None = None) -> tuple[str, str]:
         digest = hashlib.sha256(data).hexdigest()
         key = f"uploads/{digest[:16]}/{Path(file_name).name}"
         if self._remote():
             settings = get_settings(); client = self._client()
-            try: client.head_bucket(Bucket=settings.object_storage_bucket)
-            except Exception: client.create_bucket(Bucket=settings.object_storage_bucket)
+            self.ensure_bucket()
             client.put_object(Bucket=settings.object_storage_bucket, Key=key, Body=data, ContentType=content_type or "application/octet-stream")
         else:
             target = UPLOAD_DIR / key

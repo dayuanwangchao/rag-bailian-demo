@@ -79,6 +79,7 @@ migrate_json_runtime_data()
 async def lifespan(_: FastAPI):
     init_db()
     migrate_json_runtime_data()
+    object_storage.ensure_bucket()
     yield
 
 

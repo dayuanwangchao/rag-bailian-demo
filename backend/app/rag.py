@@ -239,7 +239,7 @@ async def process_ingestion_job(job_id: int) -> None:
                         len(record["content"]),
                         _sha256_text(record["content"]),
                         record["content"],
-                        document["visible_roles"],
+                        json.dumps(_decode_json_value(document["visible_roles"], []), ensure_ascii=False),
                     ),
                 )
                 chunk_ids.append(int(cursor.lastrowid))
@@ -480,7 +480,7 @@ def list_history(user_id: int, role: str) -> list[dict[str, Any]]:
     history = []
     for row in rows:
         item = dict(row)
-        item["sources"] = json.loads(item.pop("sources_json") or "[]")
+        item["sources"] = _decode_json_value(item.pop("sources_json"), [])
         item["refused"] = bool(item["refused"])
         history.append(item)
     return history
@@ -548,7 +548,7 @@ def list_audit_logs() -> list[dict[str, Any]]:
     logs = []
     for row in rows:
         item = dict(row)
-        item["metadata"] = json.loads(item.pop("metadata_json") or "{}")
+        item["metadata"] = _decode_json_value(item.pop("metadata_json"), {})
         logs.append(item)
     return logs
 
@@ -625,13 +625,22 @@ def _can_access_document(document: dict[str, Any], user: dict[str, Any]) -> bool
 
 def _decode_document(document: dict[str, Any]) -> dict[str, Any]:
     for key in ("department_scope", "visible_roles", "visible_users"):
-        value = document.get(key)
-        if isinstance(value, str):
-            try:
-                document[key] = json.loads(value or "[]")
-            except json.JSONDecodeError:
-                document[key] = []
+        document[key] = _decode_json_value(document.get(key), [])
     return document
+
+
+def _decode_json_value(value: Any, default: Any) -> Any:
+    """Accept SQLite JSON text and psycopg's decoded JSONB values."""
+    if value is None:
+        return default.copy() if hasattr(default, "copy") else default
+    if isinstance(value, str):
+        try:
+            return json.loads(value or json.dumps(default))
+        except (json.JSONDecodeError, TypeError):
+            return default.copy() if hasattr(default, "copy") else default
+    if isinstance(value, type(default)):
+        return value
+    return default.copy() if hasattr(default, "copy") else default
 
 
 def _update_job(job_id: int, status: str, progress: int, summary: str) -> None:
