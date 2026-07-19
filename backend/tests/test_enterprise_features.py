@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.rag import filter_cited_sources
+from app.rag import _decode_document, _decode_json_value, filter_cited_sources
 from app.schemas import Source
 
 
@@ -55,3 +55,10 @@ def test_filter_cited_sources_only_returns_used_references():
     filtered = filter_cited_sources("结论来自这里。[来源2]", sources)
 
     assert [source.id for source in filtered] == [2]
+
+
+def test_json_fields_support_sqlite_text_and_postgres_decoded_values():
+    assert _decode_json_value('[{"id": 1}]', []) == [{"id": 1}]
+    assert _decode_json_value([{"id": 1}], []) == [{"id": 1}]
+    assert _decode_json_value({"action": "upload"}, {}) == {"action": "upload"}
+    assert _decode_document({"visible_roles": ["reader"]})["visible_roles"] == ["reader"]

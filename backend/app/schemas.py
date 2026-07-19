@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -47,7 +49,7 @@ class KnowledgeBaseInfo(BaseModel):
     name: str
     description: str = ""
     owner_id: int | None = None
-    created_at: str | None = None
+    created_at: datetime | None = None
 
 
 class Source(BaseModel):
@@ -87,12 +89,12 @@ class DocumentInfo(BaseModel):
     chunks: int = 0
     current_version: int = 1
     uploaded_by: int | None = None
-    uploaded_at: str | None = None
+    uploaded_at: datetime | None = None
     department_scope: list[int] = []
     visible_roles: list[str] = []
     visible_users: list[int] = []
     classification: str = "internal"
-    archived_at: str | None = None
+    archived_at: datetime | None = None
     error_message: str | None = None
 
 
@@ -119,9 +121,9 @@ class IngestionJobInfo(BaseModel):
     retry_count: int = 0
     error_message: str | None = None
     log_summary: str = ""
-    started_at: str | None = None
-    finished_at: str | None = None
-    created_at: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    created_at: datetime | None = None
     file_name: str | None = None
 
 
@@ -144,7 +146,7 @@ class AuditLogInfo(BaseModel):
     target_type: str = ""
     target_id: str = ""
     metadata: dict = {}
-    created_at: str | None = None
+    created_at: datetime | None = None
 
 
 class HealthResponse(BaseModel):

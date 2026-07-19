@@ -43,18 +43,15 @@ class Connection:
         sql = re.sub(r"INSERT OR REPLACE INTO (\w+)", r"INSERT INTO \1", sql, flags=re.I)
         if "INSERT OR REPLACE" in query:
             sql += " ON CONFLICT (chunk_id) DO UPDATE SET model = EXCLUDED.model, dimensions = EXCLUDED.dimensions"
+        is_insert = sql.lstrip().upper().startswith("INSERT")
+        if is_insert and "RETURNING" not in sql.upper():
+            sql = sql.rstrip().rstrip(";") + " RETURNING id"
         cur = self.raw.cursor()
         cur.execute(sql, params)
         lastrowid = None
-        if sql.lstrip().upper().startswith("INSERT") and "RETURNING" not in sql.upper():
-            # All generated ids use BIGSERIAL. LASTVAL is connection-local.
-            id_cursor = self.raw.cursor()
-            try:
-                id_cursor.execute("SELECT LASTVAL() AS id")
-                row = id_cursor.fetchone()
-                lastrowid = int(row["id"])
-            except Exception:
-                lastrowid = None
+        if is_insert:
+            row = cur.fetchone()
+            lastrowid = int(row["id"]) if row else None
         return Cursor(cur, lastrowid)
 
     def executescript(self, script: str) -> None:
@@ -127,7 +124,8 @@ CREATE TABLE IF NOT EXISTS users (id BIGSERIAL PRIMARY KEY, username TEXT NOT NU
 CREATE TABLE IF NOT EXISTS knowledge_bases (id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '', owner_id BIGINT REFERENCES users(id), created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS documents (id BIGSERIAL PRIMARY KEY, knowledge_base_id BIGINT NOT NULL DEFAULT 1 REFERENCES knowledge_bases(id), file_name TEXT NOT NULL, file_path TEXT NOT NULL, file_uri TEXT NOT NULL DEFAULT '', file_hash TEXT NOT NULL DEFAULT '', file_type TEXT NOT NULL, size BIGINT NOT NULL, uploaded_by BIGINT REFERENCES users(id), uploaded_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, status TEXT NOT NULL DEFAULT 'pending', chunks INTEGER NOT NULL DEFAULT 0, current_version INTEGER NOT NULL DEFAULT 1, department_scope JSONB NOT NULL DEFAULT '[]', visible_roles JSONB NOT NULL DEFAULT '[]', visible_users JSONB NOT NULL DEFAULT '[]', classification TEXT NOT NULL DEFAULT 'internal', archived_at TIMESTAMPTZ, error_message TEXT);
 CREATE TABLE IF NOT EXISTS document_versions (id BIGSERIAL PRIMARY KEY, document_id BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE, version INTEGER NOT NULL, file_uri TEXT NOT NULL, file_hash TEXT NOT NULL, size BIGINT NOT NULL, created_by BIGINT REFERENCES users(id), created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(document_id, version));
-CREATE TABLE IF NOT EXISTS chunks (id BIGSERIAL PRIMARY KEY, document_id BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE, document_version_id BIGINT REFERENCES document_versions(id) ON DELETE SET NULL, file_name TEXT NOT NULL, chunk_id INTEGER NOT NULL, section_title TEXT NOT NULL DEFAULT '', page_start INTEGER, page_end INTEGER, token_count INTEGER NOT NULL DEFAULT 0, content_hash TEXT NOT NULL DEFAULT '', content TEXT NOT NULL, permission_tags JSONB NOT NULL DEFAULT '[]', embedding vector, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS chunks (id BIGSERIAL PRIMARY KEY, document_id BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE, document_version_id BIGINT REFERENCES document_versions(id) ON DELETE SET NULL, file_name TEXT NOT NULL, chunk_id INTEGER NOT NULL, section_title TEXT NOT NULL DEFAULT '', page_start INTEGER, page_end INTEGER, token_count INTEGER NOT NULL DEFAULT 0, content_hash TEXT NOT NULL DEFAULT '', content TEXT NOT NULL, permission_tags JSONB NOT NULL DEFAULT '[]', embedding vector(1024), created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP);
+ALTER TABLE chunks ALTER COLUMN embedding TYPE vector(1024) USING embedding::vector(1024);
 CREATE INDEX IF NOT EXISTS chunks_embedding_idx ON chunks USING hnsw (embedding vector_cosine_ops);
 CREATE TABLE IF NOT EXISTS ingestion_jobs (id BIGSERIAL PRIMARY KEY, document_id BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'pending', progress INTEGER NOT NULL DEFAULT 0, retry_count INTEGER NOT NULL DEFAULT 0, error_message TEXT, log_summary TEXT NOT NULL DEFAULT '', started_at TIMESTAMPTZ, finished_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS chat_sessions (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id), knowledge_base_id BIGINT REFERENCES knowledge_bases(id), created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP);
