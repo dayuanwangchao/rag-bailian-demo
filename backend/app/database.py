@@ -92,22 +92,52 @@ def get_db() -> Iterator[Connection]:
 def init_db() -> None:
     with get_db() as conn:
         if conn.postgres:
+            user_columns = {
+                row["column_name"]
+                for row in conn.execute(
+                    "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='users'"
+                ).fetchall()
+            }
             conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
             conn.executescript(_POSTGRES_SCHEMA)
+            if "clearance_level" not in user_columns:
+                conn.execute(
+                    """
+                    UPDATE users SET clearance_level = CASE
+                        WHEN role = 'system_admin' THEN 3
+                        WHEN role IN ('kb_admin', 'editor') THEN 2
+                        ELSE 1 END
+                    """
+                )
         else:
+            user_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()
+            }
+            document_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(documents)").fetchall()
+            }
             conn.executescript(_SQLITE_SCHEMA)
-            # Existing demo databases predate the test-only embedding column.
-            columns = {row["name"] for row in conn.execute("PRAGMA table_info(chunks)").fetchall()}
-            if "embedding" not in columns:
+            chunk_columns = {row["name"] for row in conn.execute("PRAGMA table_info(chunks)").fetchall()}
+            current_user_columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+            current_document_columns = {row["name"] for row in conn.execute("PRAGMA table_info(documents)").fetchall()}
+            if "embedding" not in chunk_columns:
                 conn.execute("ALTER TABLE chunks ADD COLUMN embedding TEXT")
+            if "clearance_level" not in current_user_columns:
+                conn.execute("ALTER TABLE users ADD COLUMN clearance_level INTEGER NOT NULL DEFAULT 1")
+            if "clearance_level" not in user_columns:
+                conn.execute(
+                    "UPDATE users SET clearance_level = CASE WHEN role='system_admin' THEN 3 WHEN role IN ('kb_admin','editor') THEN 2 ELSE 1 END"
+                )
+            if "security_level" not in current_document_columns:
+                conn.execute("ALTER TABLE documents ADD COLUMN security_level INTEGER NOT NULL DEFAULT 1")
         _seed_enterprise_defaults(conn)
 
 
 _SQLITE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS departments (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, role TEXT NOT NULL, department_id INTEGER, position TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, last_login_at TEXT);
+CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, role TEXT NOT NULL, department_id INTEGER, position TEXT NOT NULL DEFAULT '', clearance_level INTEGER NOT NULL DEFAULT 1 CHECK(clearance_level BETWEEN 0 AND 3), status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, last_login_at TEXT);
 CREATE TABLE IF NOT EXISTS knowledge_bases (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '', owner_id INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS documents (id INTEGER PRIMARY KEY AUTOINCREMENT, knowledge_base_id INTEGER NOT NULL DEFAULT 1, file_name TEXT NOT NULL, file_path TEXT NOT NULL, file_uri TEXT NOT NULL DEFAULT '', file_hash TEXT NOT NULL DEFAULT '', file_type TEXT NOT NULL, size INTEGER NOT NULL, uploaded_by INTEGER, uploaded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, status TEXT NOT NULL DEFAULT 'pending', chunks INTEGER NOT NULL DEFAULT 0, current_version INTEGER NOT NULL DEFAULT 1, department_scope TEXT NOT NULL DEFAULT '[]', visible_roles TEXT NOT NULL DEFAULT '[]', visible_users TEXT NOT NULL DEFAULT '[]', classification TEXT NOT NULL DEFAULT 'internal', archived_at TEXT, error_message TEXT);
+CREATE TABLE IF NOT EXISTS documents (id INTEGER PRIMARY KEY AUTOINCREMENT, knowledge_base_id INTEGER NOT NULL DEFAULT 1, file_name TEXT NOT NULL, file_path TEXT NOT NULL, file_uri TEXT NOT NULL DEFAULT '', file_hash TEXT NOT NULL DEFAULT '', file_type TEXT NOT NULL, size INTEGER NOT NULL, uploaded_by INTEGER, uploaded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, status TEXT NOT NULL DEFAULT 'pending', chunks INTEGER NOT NULL DEFAULT 0, current_version INTEGER NOT NULL DEFAULT 1, department_scope TEXT NOT NULL DEFAULT '[]', visible_roles TEXT NOT NULL DEFAULT '[]', visible_users TEXT NOT NULL DEFAULT '[]', classification TEXT NOT NULL DEFAULT 'internal', security_level INTEGER NOT NULL DEFAULT 1 CHECK(security_level BETWEEN 0 AND 3), archived_at TEXT, error_message TEXT);
 CREATE TABLE IF NOT EXISTS document_versions (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id INTEGER NOT NULL, version INTEGER NOT NULL, file_uri TEXT NOT NULL, file_hash TEXT NOT NULL, size INTEGER NOT NULL, created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(document_id, version));
 CREATE TABLE IF NOT EXISTS chunks (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id INTEGER NOT NULL, document_version_id INTEGER, file_name TEXT NOT NULL, chunk_id INTEGER NOT NULL, section_title TEXT NOT NULL DEFAULT '', page_start INTEGER, page_end INTEGER, token_count INTEGER NOT NULL DEFAULT 0, content_hash TEXT NOT NULL DEFAULT '', content TEXT NOT NULL, permission_tags TEXT NOT NULL DEFAULT '[]', embedding TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS chunk_embeddings (chunk_id INTEGER PRIMARY KEY, model TEXT NOT NULL, dimensions INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
@@ -120,9 +150,11 @@ CREATE TABLE IF NOT EXISTS feedback (id INTEGER PRIMARY KEY AUTOINCREMENT, messa
 
 _POSTGRES_SCHEMA = """
 CREATE TABLE IF NOT EXISTS departments (id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS users (id BIGSERIAL PRIMARY KEY, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('system_admin','kb_admin','editor','reader')), department_id BIGINT REFERENCES departments(id), position TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active', created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, last_login_at TIMESTAMPTZ);
+CREATE TABLE IF NOT EXISTS users (id BIGSERIAL PRIMARY KEY, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('system_admin','kb_admin','editor','reader')), department_id BIGINT REFERENCES departments(id), position TEXT NOT NULL DEFAULT '', clearance_level INTEGER NOT NULL DEFAULT 1 CHECK(clearance_level BETWEEN 0 AND 3), status TEXT NOT NULL DEFAULT 'active', created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, last_login_at TIMESTAMPTZ);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS clearance_level INTEGER NOT NULL DEFAULT 1 CHECK(clearance_level BETWEEN 0 AND 3);
 CREATE TABLE IF NOT EXISTS knowledge_bases (id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '', owner_id BIGINT REFERENCES users(id), created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS documents (id BIGSERIAL PRIMARY KEY, knowledge_base_id BIGINT NOT NULL DEFAULT 1 REFERENCES knowledge_bases(id), file_name TEXT NOT NULL, file_path TEXT NOT NULL, file_uri TEXT NOT NULL DEFAULT '', file_hash TEXT NOT NULL DEFAULT '', file_type TEXT NOT NULL, size BIGINT NOT NULL, uploaded_by BIGINT REFERENCES users(id), uploaded_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, status TEXT NOT NULL DEFAULT 'pending', chunks INTEGER NOT NULL DEFAULT 0, current_version INTEGER NOT NULL DEFAULT 1, department_scope JSONB NOT NULL DEFAULT '[]', visible_roles JSONB NOT NULL DEFAULT '[]', visible_users JSONB NOT NULL DEFAULT '[]', classification TEXT NOT NULL DEFAULT 'internal', archived_at TIMESTAMPTZ, error_message TEXT);
+CREATE TABLE IF NOT EXISTS documents (id BIGSERIAL PRIMARY KEY, knowledge_base_id BIGINT NOT NULL DEFAULT 1 REFERENCES knowledge_bases(id), file_name TEXT NOT NULL, file_path TEXT NOT NULL, file_uri TEXT NOT NULL DEFAULT '', file_hash TEXT NOT NULL DEFAULT '', file_type TEXT NOT NULL, size BIGINT NOT NULL, uploaded_by BIGINT REFERENCES users(id), uploaded_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, status TEXT NOT NULL DEFAULT 'pending', chunks INTEGER NOT NULL DEFAULT 0, current_version INTEGER NOT NULL DEFAULT 1, department_scope JSONB NOT NULL DEFAULT '[]', visible_roles JSONB NOT NULL DEFAULT '[]', visible_users JSONB NOT NULL DEFAULT '[]', classification TEXT NOT NULL DEFAULT 'internal', security_level INTEGER NOT NULL DEFAULT 1 CHECK(security_level BETWEEN 0 AND 3), archived_at TIMESTAMPTZ, error_message TEXT);
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS security_level INTEGER NOT NULL DEFAULT 1 CHECK(security_level BETWEEN 0 AND 3);
 CREATE TABLE IF NOT EXISTS document_versions (id BIGSERIAL PRIMARY KEY, document_id BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE, version INTEGER NOT NULL, file_uri TEXT NOT NULL, file_hash TEXT NOT NULL, size BIGINT NOT NULL, created_by BIGINT REFERENCES users(id), created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(document_id, version));
 CREATE TABLE IF NOT EXISTS chunks (id BIGSERIAL PRIMARY KEY, document_id BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE, document_version_id BIGINT REFERENCES document_versions(id) ON DELETE SET NULL, file_name TEXT NOT NULL, chunk_id INTEGER NOT NULL, section_title TEXT NOT NULL DEFAULT '', page_start INTEGER, page_end INTEGER, token_count INTEGER NOT NULL DEFAULT 0, content_hash TEXT NOT NULL DEFAULT '', content TEXT NOT NULL, permission_tags JSONB NOT NULL DEFAULT '[]', embedding vector(1024), created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP);
 ALTER TABLE chunks ALTER COLUMN embedding TYPE vector(1024) USING embedding::vector(1024);
@@ -147,11 +179,11 @@ def _seed_enterprise_defaults(conn: Connection) -> None:
         for ident, name in ((1, '总部'), (2, '研发部'), (3, '运营部')):
             conn.execute("INSERT OR IGNORE INTO departments (id, name) VALUES (?, ?)", (ident, name))
         conn.execute("INSERT OR IGNORE INTO knowledge_bases (id, name, description) VALUES (1, '默认知识库', '企业知识库试点空间')")
-    for username, password, role, department, position in (
-        ('admin','admin123','system_admin',1,'系统管理员'), ('kbadmin','kbadmin123','kb_admin',2,'知识库管理员'), ('editor','editor123','editor',2,'知识库编辑'), ('user','user123','reader',1,'普通员工'),
+    for username, password, role, department, position, clearance_level in (
+        ('admin','admin123','system_admin',1,'系统管理员',3), ('kbadmin','kbadmin123','kb_admin',2,'知识库管理员',2), ('editor','editor123','editor',2,'知识库编辑',2), ('user','user123','reader',1,'普通员工',1),
     ):
         if conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone() is None:
-            conn.execute("INSERT INTO users (username, password_hash, role, department_id, position) VALUES (?, ?, ?, ?, ?)", (username, hash_password(password), role, department, position))
+            conn.execute("INSERT INTO users (username, password_hash, role, department_id, position, clearance_level) VALUES (?, ?, ?, ?, ?, ?)", (username, hash_password(password), role, department, position, clearance_level))
 
 
 def get_user_by_username(username: str):
@@ -161,14 +193,14 @@ def get_user_by_id(user_id: int):
 def list_departments() -> list[dict[str, Any]]:
     with get_db() as conn: return [dict(row) for row in conn.execute("SELECT id, name, created_at FROM departments ORDER BY id").fetchall()]
 def list_users() -> list[dict[str, Any]]:
-    with get_db() as conn: return [dict(row) for row in conn.execute("SELECT u.id,u.username,u.role,u.department_id,d.name AS department_name,u.position,u.status,u.created_at,u.last_login_at FROM users u LEFT JOIN departments d ON d.id=u.department_id ORDER BY u.id").fetchall()]
-def create_user(username: str, password: str, role: str, department_id: int | None, position: str, actor_id: int) -> dict[str, Any]:
+    with get_db() as conn: return [dict(row) for row in conn.execute("SELECT u.id,u.username,u.role,u.department_id,d.name AS department_name,u.position,u.clearance_level,u.status,u.created_at,u.last_login_at FROM users u LEFT JOIN departments d ON d.id=u.department_id ORDER BY u.id").fetchall()]
+def create_user(username: str, password: str, role: str, department_id: int | None, position: str, clearance_level: int, actor_id: int) -> dict[str, Any]:
     with get_db() as conn:
         if department_id is not None and conn.execute("SELECT id FROM departments WHERE id = ?", (department_id,)).fetchone() is None: raise ValueError("部门不存在")
-        user_id = int(conn.execute("INSERT INTO users (username,password_hash,role,department_id,position) VALUES (?,?,?,?,?)", (username,hash_password(password),role,department_id,position)).lastrowid)
-    audit(actor_id,"user.create","user",user_id,{"username":username,"role":role}); return dict(get_user_by_id(user_id) or {})
+        user_id = int(conn.execute("INSERT INTO users (username,password_hash,role,department_id,position,clearance_level) VALUES (?,?,?,?,?,?)", (username,hash_password(password),role,department_id,position,clearance_level)).lastrowid)
+    audit(actor_id,"user.create","user",user_id,{"username":username,"role":role,"clearance_level":clearance_level}); return dict(get_user_by_id(user_id) or {})
 def update_user(user_id: int, updates: dict[str, Any], actor_id: int) -> dict[str, Any] | None:
-    allowed={k:v for k,v in updates.items() if v is not None and k in {"role","department_id","position","status"}}
+    allowed={k:v for k,v in updates.items() if v is not None and k in {"role","department_id","position","clearance_level","status"}}
     if user_id == actor_id and "status" in allowed: raise ValueError("不能修改当前登录账号状态")
     if user_id == actor_id and allowed.get("role") and normalize_role(allowed["role"]) != "system_admin": raise ValueError("不能降低当前登录账号权限")
     with get_db() as conn:

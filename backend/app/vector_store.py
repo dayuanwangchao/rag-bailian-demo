@@ -21,11 +21,51 @@ class VectorStore:
     def reset(self) -> None:
         with get_db() as conn: conn.execute("UPDATE chunks SET embedding = NULL")
 
-    def search(self, query_vector: list[float], top_k: int) -> list[tuple[int, float]]:
+    def search(
+        self,
+        query_vector: list[float],
+        top_k: int,
+        user: dict | None = None,
+        knowledge_base_id: int | None = None,
+    ) -> list[tuple[int, float]]:
         literal = "[" + ",".join(f"{item:.8g}" for item in query_vector) + "]"
         with get_db() as conn:
             if conn.postgres:
-                rows = conn.execute("SELECT id, 1 - (embedding <=> ?::vector) AS score FROM chunks WHERE embedding IS NOT NULL ORDER BY embedding <=> ?::vector LIMIT ?", (literal, literal, top_k)).fetchall()
+                clauses = ["c.embedding IS NOT NULL", "d.status = 'indexed'", "d.archived_at IS NULL"]
+                params: list = [literal]
+                if knowledge_base_id is not None:
+                    clauses.append("d.knowledge_base_id = ?")
+                    params.append(knowledge_base_id)
+                role = str((user or {}).get("role", "reader"))
+                if role != "system_admin":
+                    user_id = int((user or {}).get("sub") or (user or {}).get("id") or 0)
+                    department_id = (user or {}).get("department_id")
+                    clearance_level = int((user or {}).get("clearance_level", 1))
+                    permission_clauses = [
+                        "d.security_level <= ?",
+                        "(d.visible_roles = '[]'::jsonb OR d.visible_roles @> ?::jsonb)",
+                        "(d.visible_users = '[]'::jsonb OR d.visible_users @> ?::jsonb)",
+                    ]
+                    permission_params = [clearance_level, json.dumps([role]), json.dumps([user_id])]
+                    if department_id is None:
+                        permission_clauses.append("d.department_scope = '[]'::jsonb")
+                    else:
+                        permission_clauses.append("(d.department_scope = '[]'::jsonb OR d.department_scope @> ?::jsonb)")
+                        permission_params.append(json.dumps([int(department_id)]))
+                    clauses.append("(d.security_level = 0 OR (" + " AND ".join(permission_clauses) + "))")
+                    params.extend(permission_params)
+                params.extend([literal, top_k])
+                rows = conn.execute(
+                    f"""
+                    SELECT c.id, 1 - (c.embedding <=> ?::vector) AS score
+                    FROM chunks c
+                    JOIN documents d ON d.id = c.document_id
+                    WHERE {' AND '.join(clauses)}
+                    ORDER BY c.embedding <=> ?::vector
+                    LIMIT ?
+                    """,
+                    params,
+                ).fetchall()
                 return [(int(row["id"]), float(row["score"])) for row in rows]
             rows = conn.execute("SELECT id, embedding FROM chunks WHERE embedding IS NOT NULL").fetchall()
         def cosine(raw: str) -> float:

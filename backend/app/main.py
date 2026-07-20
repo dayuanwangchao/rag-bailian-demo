@@ -2,7 +2,7 @@ import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile, status
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
@@ -11,6 +11,7 @@ from .database import (
     audit,
     create_user,
     get_db,
+    get_user_by_id,
     get_user_by_username,
     init_db,
     list_departments,
@@ -30,6 +31,7 @@ from .rag import (
     append_history,
     archive_document,
     build_messages,
+    can_access_document,
     create_document_record,
     create_feedback,
     create_ingestion_job,
@@ -46,12 +48,15 @@ from .rag import (
     process_ingestion_job,
     rebuild_index,
     retrieve_sources,
+    update_document_permissions,
 )
 from .schemas import (
     AuditLogInfo,
     ChatRequest,
     ChatResponse,
     DeleteResponse,
+    DocumentInfo,
+    DocumentPermissionUpdate,
     FeedbackRequest,
     FeedbackResponse,
     HealthResponse,
@@ -143,6 +148,7 @@ def login(payload: LoginRequest) -> TokenResponse:
             "username": user["username"],
             "role": role,
             "department_id": user["department_id"],
+            "clearance_level": int(user["clearance_level"]),
         }
     )
     touch_last_login(int(user["id"]))
@@ -177,6 +183,7 @@ def add_user(payload: UserCreate, token: dict = Depends(require_system_admin)):
             payload.role,
             payload.department_id,
             payload.position,
+            payload.clearance_level,
             int(token["sub"]),
         )
     except Exception as exc:
@@ -213,8 +220,23 @@ async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     knowledge_base_id: int = 1,
+    security_level: int = Form(default=1, ge=0, le=3),
     payload: dict = Depends(require_admin),
 ) -> UploadResponse:
+    actor = get_user_by_id(int(payload["sub"]))
+    if actor is None or actor["status"] != "active":
+        raise HTTPException(status_code=403, detail="账号不存在或已停用")
+    actor_role = normalize_role(str(actor["role"]))
+    if actor_role not in {"system_admin", "kb_admin", "editor"}:
+        raise HTTPException(status_code=403, detail="当前账号没有文档管理权限")
+    if actor_role != "system_admin" and security_level > int(actor["clearance_level"]):
+        raise HTTPException(status_code=403, detail="不能上传高于自身安全等级的文档")
+    payload = {
+        **payload,
+        "role": actor_role,
+        "department_id": actor["department_id"],
+        "clearance_level": int(actor["clearance_level"]),
+    }
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in SUPPORTED_EXTENSIONS:
         raise HTTPException(status_code=400, detail="仅支持 PDF、DOCX、TXT、MD 文件")
@@ -226,7 +248,15 @@ async def upload_document(
     if len(data) > settings.max_upload_mb * 1024 * 1024:
         raise HTTPException(status_code=413, detail=f"文件不能超过 {settings.max_upload_mb}MB")
     object_key, file_hash = object_storage.put_bytes(safe_name, data, file.content_type)
-    document_id, job_id = create_document_record(safe_name, object_key, file_hash, len(data), payload, knowledge_base_id)
+    document_id, job_id = create_document_record(
+        safe_name,
+        object_key,
+        file_hash,
+        len(data),
+        payload,
+        knowledge_base_id,
+        security_level=security_level,
+    )
     if settings.ingestion_mode == "inline":
         background_tasks.add_task(process_ingestion_job, job_id)
     else:
@@ -248,7 +278,7 @@ async def upload_legacy(
     file: UploadFile = File(...),
     payload: dict = Depends(require_admin),
 ) -> UploadResponse:
-    return await upload_document(background_tasks, file, 1, payload)
+    return await upload_document(background_tasks, file, 1, 1, payload)
 
 
 @app.post("/api/rebuild", response_model=RebuildResponse)
@@ -270,6 +300,8 @@ async def retry_document(
     document = get_document(document_id)
     if document is None:
         raise HTTPException(status_code=404, detail="文档不存在")
+    if not can_access_document(document, payload):
+        raise HTTPException(status_code=403, detail="无权操作该文档")
     job_id = create_ingestion_job(document_id)
     if settings.ingestion_mode == "inline":
         background_tasks.add_task(process_ingestion_job, job_id)
@@ -288,6 +320,11 @@ async def retry_document(
 
 @app.post("/api/documents/{document_id}/archive", response_model=DeleteResponse)
 async def archive(document_id: int, payload: dict = Depends(require_admin)) -> DeleteResponse:
+    document = get_document(document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    if not can_access_document(document, payload):
+        raise HTTPException(status_code=403, detail="无权操作该文档")
     archived = await archive_document(document_id, int(payload["sub"]))
     if not archived:
         raise HTTPException(status_code=404, detail="文档不存在")
@@ -296,6 +333,11 @@ async def archive(document_id: int, payload: dict = Depends(require_admin)) -> D
 
 @app.delete("/api/documents/{document_id}", response_model=DeleteResponse)
 async def remove_document(document_id: int, payload: dict = Depends(require_admin)) -> DeleteResponse:
+    document = get_document(document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    if not can_access_document(document, payload):
+        raise HTTPException(status_code=403, detail="无权操作该文档")
     deleted = await delete_document(document_id, int(payload["sub"]))
     if not deleted:
         raise HTTPException(status_code=404, detail="文档不存在")
@@ -351,11 +393,32 @@ def documents(payload: dict = Depends(get_token_payload)):
 
 
 @app.get("/api/documents/{document_id}")
-def document_detail(document_id: int, _: dict = Depends(get_token_payload)):
+def document_detail(document_id: int, payload: dict = Depends(get_token_payload)):
     document = get_document(document_id)
     if document is None:
         raise HTTPException(status_code=404, detail="文档不存在")
+    if not can_access_document(document, payload):
+        raise HTTPException(status_code=403, detail="无权访问该文档")
     return document
+
+
+@app.patch("/api/documents/{document_id}/permissions", response_model=DocumentInfo)
+def patch_document_permissions(
+    document_id: int,
+    changes: DocumentPermissionUpdate,
+    payload: dict = Depends(require_system_admin),
+) -> DocumentInfo:
+    try:
+        document = update_document_permissions(
+            document_id,
+            changes.model_dump(exclude_unset=True),
+            int(payload["sub"]),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if document is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    return DocumentInfo(**document)
 
 
 @app.get("/api/ingestion-jobs", response_model=list[IngestionJobInfo])
@@ -399,5 +462,6 @@ def _user_info(user: dict, role: str) -> UserInfo:
         department_id=user.get("department_id"),
         department_name=user.get("department_name"),
         position=user.get("position") or "",
+        clearance_level=int(user.get("clearance_level", 1)),
         status=user.get("status") or "active",
     )

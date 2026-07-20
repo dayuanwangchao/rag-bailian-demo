@@ -99,12 +99,21 @@ export function getHistory() {
   return request('/api/history')
 }
 
-export function uploadDocument(file, knowledgeBaseId = 1) {
+export function uploadDocument(file, knowledgeBaseId = 1, permissions = {}) {
   const formData = new FormData()
   formData.append('file', file)
+  formData.append('security_level', String(permissions.security_level ?? 1))
   return request(`/api/documents/upload?knowledge_base_id=${knowledgeBaseId}`, {
     method: 'POST',
     body: formData,
+  })
+}
+
+export function updateDocumentPermissions(documentId, updates) {
+  return request(`/api/documents/${documentId}/permissions`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
   })
 }
 

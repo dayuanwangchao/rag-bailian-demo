@@ -15,6 +15,7 @@ class UserInfo(BaseModel):
     department_id: int | None = None
     department_name: str | None = None
     position: str = ""
+    clearance_level: int = Field(default=1, ge=0, le=3)
     status: str = "active"
 
 
@@ -24,12 +25,14 @@ class UserCreate(BaseModel):
     role: str = Field(..., pattern="^(system_admin|kb_admin|editor|reader)$")
     department_id: int | None = None
     position: str = Field(default="", max_length=80)
+    clearance_level: int = Field(default=1, ge=0, le=3)
 
 
 class UserUpdate(BaseModel):
     role: str | None = Field(default=None, pattern="^(system_admin|kb_admin|editor|reader)$")
     department_id: int | None = None
     position: str | None = Field(default=None, max_length=80)
+    clearance_level: int | None = Field(default=None, ge=0, le=3)
     status: str | None = Field(default=None, pattern="^(active|disabled)$")
 
 
@@ -94,8 +97,16 @@ class DocumentInfo(BaseModel):
     visible_roles: list[str] = []
     visible_users: list[int] = []
     classification: str = "internal"
+    security_level: int = Field(default=1, ge=0, le=3)
     archived_at: datetime | None = None
     error_message: str | None = None
+
+
+class DocumentPermissionUpdate(BaseModel):
+    security_level: int | None = Field(default=None, ge=0, le=3)
+    department_scope: list[int] | None = None
+    visible_roles: list[str] | None = None
+    visible_users: list[int] | None = None
 
 
 class UploadResponse(BaseModel):
