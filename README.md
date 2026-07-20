@@ -8,7 +8,7 @@
 
 - 问答端：登录、SSE 流式回答、引用来源展开、个人历史记录和回答反馈
 - 管理端：知识库管理、文档上传、异步入库、失败重试、归档、删除和重建索引
-- 权限控制：JWT 鉴权，支持 `system_admin`、`kb_admin`、`editor`、`reader` 四种角色
+- 权限控制：JWT 鉴权，支持四种角色、部门范围、指定用户名单和 0—3 级安全等级
 - RAG 链路：PDF/DOCX/TXT/MD 解析、结构化切分、百炼 Embedding、pgvector 检索、`qwen-plus` 回答
 - 共享存储：PostgreSQL 保存业务数据和向量，MinIO 保存原始文件，Redis 承载入库队列
 - 可观测性：健康检查、入库任务进度、失败原因、审计日志和容器日志
@@ -104,6 +104,28 @@ rag-bailian-demo/
 | 普通员工 | `user` | `user123` |
 
 这些账号仅用于本地演示，正式部署前必须更换。
+
+## 文档权限模型
+
+用户和文档分别保存 `clearance_level` 与 `security_level`：
+
+| 等级 | 名称 | 典型用途 |
+| --- | --- | --- |
+| 0 | 公开 | 可公开的制度和资料 |
+| 1 | 内部 | 普通企业内部资料 |
+| 2 | 机密 | 部门经理、核心项目成员可见 |
+| 3 | 绝密 | 高管或显式授权人员可见 |
+
+公开（0级）文档对所有启用状态的已登录用户可见，不再受部门、角色和指定用户范围限制。内部及以上文档必须同时满足：
+
+```text
+用户安全等级 >= 文档密级
+AND 用户角色在文档可见角色中（非空时）
+AND 用户部门在文档部门范围中（非空时）
+AND 用户在文档指定用户列表中（非空时）
+```
+
+权限条件会进入 PostgreSQL/pgvector 的向量查询，并在返回来源前再次校验。系统管理员可在用户管理中调整员工安全等级，在上传和文档列表中设置文档密级。`position` 仍是岗位展示字段，不直接参与权限计算。
 
 ## Docker 一键启动
 
@@ -259,6 +281,7 @@ npm run dev -- --host 127.0.0.1 --port 5176
 - `GET /api/documents`：文档列表
 - `POST /api/documents/upload`：上传文件并创建入库任务
 - `POST /api/documents/{id}/retry`：失败任务重试
+- `PATCH /api/documents/{id}/permissions`：修改文档密级和访问范围，仅系统管理员
 - `POST /api/documents/{id}/archive`：归档文档
 - `DELETE /api/documents/{id}`：删除文档、元数据和对象
 - `GET /api/ingestion-jobs`：入库任务列表和进度

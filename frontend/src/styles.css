@@ -540,6 +540,25 @@ button:disabled {
   flex: 1;
 }
 
+.policy-field {
+  display: grid;
+  gap: 6px;
+  margin-top: 14px;
+  color: #465568;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.policy-field select,
+.compact-select {
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid #d7e0ea;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #213044;
+}
+
 .index-summary {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -587,7 +606,7 @@ button:disabled {
 
 .user-create-form {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr)) 140px;
+  grid-template-columns: repeat(6, minmax(0, 1fr)) 140px;
   gap: 10px;
   margin-bottom: 14px;
 }
@@ -613,7 +632,7 @@ button:disabled {
 
 .user-row {
   display: grid;
-  grid-template-columns: minmax(120px, 0.9fr) 160px 150px minmax(100px, 1fr) 110px;
+  grid-template-columns: minmax(120px, 0.9fr) 150px 140px minmax(100px, 1fr) 120px 100px;
   gap: 12px;
   align-items: center;
   padding: 12px 14px;
@@ -634,7 +653,7 @@ button:disabled {
 
 .table-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 110px 80px 120px 100px;
+  grid-template-columns: minmax(0, 1fr) 105px 70px 105px 100px 100px;
   gap: 12px;
   align-items: center;
   padding: 12px 14px;

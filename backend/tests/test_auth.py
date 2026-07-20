@@ -19,6 +19,7 @@ def test_demo_users_can_login():
 
     assert admin_response.status_code == 200
     assert admin_response.json()["user"]["role"] == "system_admin"
+    assert admin_response.json()["user"]["clearance_level"] == 3
     assert admin_response.json()["user"]["status"] == "active"
     assert kbadmin_response.status_code == 200
     assert kbadmin_response.json()["user"]["role"] == "kb_admin"
@@ -26,6 +27,7 @@ def test_demo_users_can_login():
     assert editor_response.json()["user"]["role"] == "editor"
     assert user_response.status_code == 200
     assert user_response.json()["user"]["role"] == "reader"
+    assert user_response.json()["user"]["clearance_level"] == 1
 
 
 def test_user_cannot_rebuild_index():

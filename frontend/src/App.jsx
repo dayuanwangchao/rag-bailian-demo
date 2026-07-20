@@ -35,6 +35,7 @@ import {
   sendFeedback,
   setAccessToken,
   streamChat,
+  updateDocumentPermissions,
   updateUser,
   uploadDocument,
 } from './api'
@@ -155,13 +156,13 @@ export default function App() {
     setError('')
   }
 
-  async function handleUpload(event) {
+  async function handleUpload(event, permissions = {}) {
     const file = event.target.files?.[0]
     if (!file) return
     setWorking(true)
     setError('')
     try {
-      await uploadDocument(file, selectedKbId)
+      await uploadDocument(file, selectedKbId, permissions)
       await refreshData()
     } catch (err) {
       setError(err.message)
@@ -241,6 +242,19 @@ export default function App() {
     setError('')
     try {
       await updateUser(userId, updates)
+      await refreshData()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  async function handleUpdateDocumentPermissions(documentId, updates) {
+    setWorking(true)
+    setError('')
+    try {
+      await updateDocumentPermissions(documentId, updates)
       await refreshData()
     } catch (err) {
       setError(err.message)
@@ -414,6 +428,7 @@ export default function App() {
             knowledgeBases={knowledgeBases}
             isSystemAdmin={isSystemAdmin}
             onCreateUser={handleCreateUser}
+            onUpdateDocumentPermissions={handleUpdateDocumentPermissions}
             onUpdateUser={handleUpdateUser}
             selectedKbId={selectedKbId}
             setSelectedKbId={setSelectedKbId}
@@ -586,12 +601,15 @@ function AdminView({
   jobs,
   knowledgeBases,
   onCreateUser,
+  onUpdateDocumentPermissions,
   onUpdateUser,
   selectedKbId,
   setSelectedKbId,
   users,
   working,
 }) {
+  const [uploadSecurityLevel, setUploadSecurityLevel] = useState(1)
+
   return (
     <section className="workspace admin-workspace">
       <header className="workspace-header">
@@ -617,6 +635,14 @@ function AdminView({
             文档入库
           </div>
           <p>支持 PDF、DOCX、TXT、MD。上传后进入后台入库任务，管理员可查看状态和失败原因。</p>
+          <label className="policy-field">
+            <span>文档密级</span>
+            <select value={uploadSecurityLevel} onChange={(event) => setUploadSecurityLevel(Number(event.target.value))}>
+              {SECURITY_LEVEL_OPTIONS.map((level) => (
+                <option value={level.value} key={level.value}>{level.label}</option>
+              ))}
+            </select>
+          </label>
           <div className="admin-actions">
             <button className="primary-button" onClick={() => fileInputRef.current?.click()} disabled={working}>
               <UploadCloud size={18} />
@@ -632,7 +658,7 @@ function AdminView({
             className="hidden-input"
             type="file"
             accept=".pdf,.docx,.txt,.md"
-            onChange={handleUpload}
+            onChange={(event) => handleUpload(event, { security_level: uploadSecurityLevel })}
           />
         </section>
 
@@ -713,6 +739,7 @@ function AdminView({
               <span>状态</span>
               <span>片段</span>
               <span>大小</span>
+              <span>密级</span>
               <span>操作</span>
             </div>
             {documents.map((doc) => (
@@ -724,6 +751,20 @@ function AdminView({
                 <span className={`status-pill ${doc.status}`}>{statusText(doc.status)}</span>
               <span>{doc.chunks}</span>
               <span>{formatSize(doc.size)}</span>
+              <span>
+                {isSystemAdmin ? (
+                  <select
+                    className="compact-select"
+                    value={doc.security_level ?? 1}
+                    disabled={working}
+                    onChange={(event) => onUpdateDocumentPermissions(doc.id, { security_level: Number(event.target.value) })}
+                  >
+                    {SECURITY_LEVEL_OPTIONS.map((level) => (
+                      <option value={level.value} key={level.value}>{level.shortLabel}</option>
+                    ))}
+                  </select>
+                ) : securityLevelText(doc.security_level)}
+              </span>
               <span className="row-actions">
                   <button className="icon-button" onClick={() => handleRetry(doc.id)} disabled={working} title="重新入库">
                     <RotateCcw size={16} />
@@ -754,6 +795,7 @@ function AdminView({
               <span>角色</span>
               <span>部门</span>
               <span>岗位</span>
+              <span>安全等级</span>
               <span>状态</span>
             </div>
             {users.map((item) => (
@@ -789,6 +831,16 @@ function AdminView({
                 </select>
                 <span>{item.position || '-'}</span>
                 <select
+                  value={item.clearance_level ?? 1}
+                  disabled={working || item.id === currentUserId}
+                  title={item.id === currentUserId ? '不能修改当前登录账号安全等级' : '修改安全等级'}
+                  onChange={(event) => onUpdateUser(item.id, { clearance_level: Number(event.target.value) })}
+                >
+                  {SECURITY_LEVEL_OPTIONS.map((level) => (
+                    <option value={level.value} key={level.value}>{level.shortLabel}</option>
+                  ))}
+                </select>
+                <select
                   value={item.status}
                   disabled={working || item.id === currentUserId}
                   title={item.id === currentUserId ? '不能停用当前登录账号' : '修改状态'}
@@ -813,6 +865,13 @@ const ROLE_OPTIONS = [
   { value: 'reader', label: '普通员工' },
 ]
 
+const SECURITY_LEVEL_OPTIONS = [
+  { value: 0, label: '0 · 公开', shortLabel: '公开' },
+  { value: 1, label: '1 · 内部', shortLabel: '内部' },
+  { value: 2, label: '2 · 机密', shortLabel: '机密' },
+  { value: 3, label: '3 · 绝密', shortLabel: '绝密' },
+]
+
 function UserCreateForm({ departments, onCreateUser, working }) {
   const [form, setForm] = useState({
     username: '',
@@ -820,6 +879,7 @@ function UserCreateForm({ departments, onCreateUser, working }) {
     role: 'reader',
     department_id: '',
     position: '',
+    clearance_level: 1,
   })
 
   function update(field, value) {
@@ -834,8 +894,9 @@ function UserCreateForm({ departments, onCreateUser, working }) {
       role: form.role,
       department_id: form.department_id ? Number(form.department_id) : null,
       position: form.position.trim(),
+      clearance_level: Number(form.clearance_level),
     })
-    setForm({ username: '', password: '', role: 'reader', department_id: '', position: '' })
+    setForm({ username: '', password: '', role: 'reader', department_id: '', position: '', clearance_level: 1 })
   }
 
   return (
@@ -874,6 +935,11 @@ function UserCreateForm({ departments, onCreateUser, working }) {
         onChange={(event) => update('position', event.target.value)}
         placeholder="岗位"
       />
+      <select value={form.clearance_level} onChange={(event) => update('clearance_level', Number(event.target.value))}>
+        {SECURITY_LEVEL_OPTIONS.map((level) => (
+          <option value={level.value} key={level.value}>{level.label}</option>
+        ))}
+      </select>
       <button type="submit" className="primary-button" disabled={working || !form.username.trim() || !form.password}>
         <UserPlus size={17} />
         创建账号
@@ -891,6 +957,10 @@ function statusText(status) {
     archived: '已归档',
   }
   return map[status] || status
+}
+
+function securityLevelText(level) {
+  return SECURITY_LEVEL_OPTIONS.find((item) => item.value === Number(level))?.shortLabel || '内部'
 }
 
 function formatSize(size) {
